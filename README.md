@@ -88,7 +88,7 @@ that are plain files.
 | **No wobble** | The PS1 snaps every vertex to whole pixels and maps textures without perspective, which makes polygons shake and textures warp. The port keeps precise vertex positions and draws textures with correct perspective. |
 | **Widescreen 16:9** | A wider view of the 3D world, made by widening the camera, not by stretching the picture. Menus, text boxes and the HUD keep their 4:3 layout. |
 | **Sharpening** | Optional contrast adaptive sharpening of the scaled picture (strength 0 to 100, off by default), on the graphics card or on the CPU with the software renderer. Edges get crisper without halos. F8 turns it on and off. |
-| **Smooth frames** | The game runs at its original 30 frames per second, but the picture is drawn at your monitor's refresh rate (60, 144, 240 Hz): the city, the domains and the battles are blended between two game frames, so walking, turning and battle camera moves look fluid. Game logic, timing and random numbers stay exactly the same; the picture is one game frame behind. Camera cuts stay cuts, menus and text stay as they are. On by default with the GPU renderer, F9 turns it off. |
+| **Smooth frames** | The game runs at its original 30 frames per second, but the picture is drawn at your monitor's refresh rate (60, 144, 240 Hz): the city, the domains and the battles are blended between two game frames, so walking, turning and battle camera moves look fluid. Game logic, timing and random numbers stay exactly the same; the picture is one game frame behind. Camera cuts stay cuts, menus and text stay as they are. Paused while the speed-up runs. On by default with the GPU renderer, F9 turns it off. |
 | **GPU renderer** | Drawing runs on the graphics card through SDL_GPU (Vulkan). A software renderer stays as a fallback. |
 | **Exact frame timing** | The game runs at the PS1's 59.94 Hz, paced to the real clock, on its own thread, so dragging or resizing the window does not stall it. |
 | **Speed-up** | F3 unlocks the speed: battles, walking in the domains and menus run 2x to 8x faster, or with no limit (pick it in F1, Game tab; 3x by default). F3 again locks it to normal speed. Music and battle voices play faster with it; movies always play at normal speed. |
@@ -218,6 +218,7 @@ download page, or skip it. Saves and settings stay. Turn it off in F1 > Game or 
 
 ## Version history
 
+- **v0.1.8** (2026-10-12): the game no longer runs slower with smooth frames on some PCs (worse with the speed-up); smooth frames pause while the speed-up is on.
 - **v0.1.7** (2026-10-12): smooth frames: the city, the domains and the battles are drawn at the monitor's refresh rate, blended between game frames (F9, F1; on by default).
 - **v0.1.6** (2026-10-12): no stray "Attack" labels in the top left corner of the battle screen during the interrupt prompt (issue #4).
 - **v0.1.5** (2026-10-10): healing items and skills heal in battle again (they counted as attacks on PC).

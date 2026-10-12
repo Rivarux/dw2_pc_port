@@ -86,6 +86,8 @@ the save (card1.mcd) from just before the problem.
 Version history
 ---------------
 
+v0.1.8  The game no longer runs slower with smooth frames on some PCs (worse with the
+        speed-up); smooth frames pause while the speed-up is on.
 v0.1.7  Smooth frames: the city, the domains and the battles are drawn at the monitor's
         refresh rate, blended between game frames (F9, F1; on by default).
 v0.1.6  No stray "Attack" labels in the top left corner of the battle screen during the

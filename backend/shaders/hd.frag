@@ -25,6 +25,7 @@ layout(std430, set = 2, binding = 0) readonly buffer Vram {
 
 layout(set = 3, binding = 0) uniform Params {
     int scale;
+    int ox, oy; /* PR.34: the target's origin in surface pixels (0 for a surface) */
 } params;
 
 const int dither_tbl[16] = int[16](-4, 0, -3, 1, 2, -2, 3, -1, -3, 1, -4, 0, 3, -1, 2, -2);
@@ -45,7 +46,7 @@ vec4 out_col(ivec3 c5, bool mask) {
 void main() {
     uint tex = v_par.x, win = v_par.y, fl = v_par.z;
     int S = params.scale;
-    ivec2 P = ivec2(gl_FragCoord.xy);
+    ivec2 P = ivec2(gl_FragCoord.xy) + ivec2(params.ox, params.oy);
     vec2 dx = dFdx(v_uv), dy = dFdy(v_uv);
     vec2 uv = v_uv;
     int kind = int((fl >> 6) & 3u);

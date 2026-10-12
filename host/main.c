@@ -31,7 +31,7 @@
  *
  *   dw2 [IMAGE] [--disc IMAGE] [--pak PATH] [--vblanks N] [--no-window] [--shot-dir DIR] [--shot-at N]... [--shot-vb N]...
  *       [--hold-boot N] [--press N:BUTTONS[:LEN]]... [--press2 N:BUTTONS[:LEN]]... [--save-dir DIR]
- *       [--fast] [--pad2-keys] [--scale N] [--sharpen N] [--hd-threads N] [--pgxp] [--wide] [--renderer gpu|soft]
+ *       [--fast] [--pad2-keys] [--scale N] [--sharpen N] [--hd-threads N] [--pgxp] [--wide] [--smooth] [--renderer gpu|soft]
  *       [--settings PATH] [--settings-set KEY=VALUE]... [--settings-ui] [--settings-tab T] [--ui-shots] [--quit-dialog]
  *       [--no-update-check] [--update-check] [--version]
  *       [--movies] [--window-mode M] [--fullscreen] [--windowed]
@@ -380,7 +380,7 @@ static void run_threaded(void) {
 
 HOST_ENTRY int main(int argc, char **argv) {
     int i;
-    int cl_scale = 0, cl_wide = 0, cl_pgxp = 0, cl_renderer = 0, cl_window = -1, cl_sharpen = -1;
+    int cl_scale = 0, cl_wide = 0, cl_pgxp = 0, cl_renderer = 0, cl_window = -1, cl_sharpen = -1, cl_smooth = 0;
     int update_force = 0;
 
 #ifdef _WIN32
@@ -455,6 +455,8 @@ HOST_ENTRY int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--pgxp") == 0) {
             Host_SetPgxp(1);
             cl_pgxp = 1;
+        } else if (strcmp(argv[i], "--smooth") == 0) {
+            cl_smooth = 1;
         } else if (strcmp(argv[i], "--wide") == 0) {
             Host_SetWide(1);
             cl_wide = 1;
@@ -481,7 +483,7 @@ HOST_ENTRY int main(int argc, char **argv) {
             fprintf(stderr,
                     "usage: %s [IMAGE] [--disc IMAGE] [--pak PATH] [--vblanks N] [--no-window] [--shot-dir DIR] [--shot-at N]... "
                     "[--shot-vb N]... [--hold-boot N] [--press N:BUTTONS[:LEN]]... [--press2 N:BUTTONS[:LEN]]... "
-                    "[--save-dir DIR] [--fast] [--speed-up] [--pad2-keys] [--scale N] [--sharpen N] [--hd-threads N] [--pgxp] [--wide] "
+                    "[--save-dir DIR] [--fast] [--speed-up] [--pad2-keys] [--scale N] [--sharpen N] [--hd-threads N] [--pgxp] [--wide] [--smooth] "
                     "[--renderer gpu|soft] [--settings PATH] [--settings-set KEY=VALUE]... [--settings-ui] [--settings-tab T] [--ui-shots] [--quit-dialog] [--no-update-check] [--update-check] [--update-as V] [--update-auto] [--version] "
                     "[--movies] [--window-mode windowed|borderless|exclusive] [--fullscreen] [--windowed]%s\n",
                     argv[0], DW2_DEV ? " [--start-mode N] [--devui] [--devui-tab T] [--window-size W H] [--devedit N:KIND=ARGS]..." : "");
@@ -508,6 +510,9 @@ HOST_ENTRY int main(int argc, char **argv) {
     if (cl_sharpen >= 0) {
         Settings_Override(SET_SHARPEN, cl_sharpen);
     }
+    if (cl_smooth) {
+        Settings_Override(SET_SMOOTH, 1);
+    }
     Settings_Load(no_window);
     if (!cl_scale) {
         PsxHd_SetScale(Settings_Get(SET_SCALE));
@@ -519,6 +524,9 @@ HOST_ENTRY int main(int argc, char **argv) {
         Host_SetPgxp(1);
     }
     Host_SetSharpen(Settings_Get(SET_SHARPEN)); /* the override's value with --sharpen */
+    if (Settings_Get(SET_SMOOTH)) {
+        Host_SetSmooth(1); /* PR.34, also with --smooth */
+    }
     if (!cl_renderer && Settings_Get(SET_RENDERER) == SET_RENDERER_SOFT) {
         Host_SetRenderer(1);
     }

@@ -6,6 +6,7 @@
 
 #include <SDL3/SDL.h>
 
+#include "backend/pgxp.h"
 #include "backend/psxgpu.h"
 #include "backend/psxgpu_hd.h"
 #include "backend/psxgpu_hd_int.h"
@@ -51,6 +52,10 @@ static uint32_t *sharp_buf; /* PR.2b: the picture before sharpening (soft) */
 static size_t sharp_cap;
 static void *sharp_tex; /* PR.2b: the sharpened picture of a read (GPU) */
 static int sharp_tex_w, sharp_tex_h;
+static int logging;     /* PR.34: this frame's commands go into the smooth log */
+static void smooth_log(void);
+static void smooth_begin(void);
+static int layer_of(uintptr_t a);
 
 /* PS1 dither offsets by (y & 3, x & 3), as in backend/psxgpu.c. */
 static const int dither_tbl[4][4] = {
@@ -80,6 +85,7 @@ static void drop(int i) {
 static void release_all(void) {
     int i;
 
+    logging = 0; /* PR.34: a frame logged into a surface that goes is not drawn again */
     for (i = 0; i < nsurf; i++) {
         free_surf(&surf[i]);
     }
@@ -252,6 +258,9 @@ static void flush(void) {
     if (queued == 0) {
         return;
     }
+    if (logging) {
+        smooth_log();
+    }
     if (gpu) {
         PsxHw_Flush(queue, queued, scale);
         queued = 0;
@@ -288,6 +297,10 @@ static Cmd *push(int type, Surf *s, const PsxGpuState *st) {
     c->s = s;
     c->st = *st;
     c->wide = frame_wide;
+    c->layer = logging ? layer_of(PsxHd_Packet) : 0;
+    c->blend = 0;
+    c->dx = 0;
+    c->dy = 0;
     return c;
 }
 
@@ -384,6 +397,24 @@ void PsxHd_PillarboxFrame(void) {
 void PsxHd_BeginFrame(void) {
     frame_wide = wide && !pillar_next;
     pillar_next = 0;
+    if (PsxHd_SmoothActive()) {
+        /* PR.34: what was queued before belongs to no frame, except the fills at its end
+         * (PutDrawEnv's background clear: the dungeon's black, PR.34), which start the log */
+        int k = queued, n;
+
+        while (k > 0 && queue[k - 1].type == PSXHD_FILL) {
+            k--;
+        }
+        n = queued - k;
+        queued = k;
+        logging = 0;
+        flush();
+        if (n > 0) {
+            memmove(queue, queue + k, (size_t)n * sizeof(Cmd));
+            queued = n;
+        }
+        smooth_begin();
+    }
 }
 
 static int contains(const Surf *s, int x, int y, int w, int h) {
@@ -455,14 +486,27 @@ static void hd_clip(const PsxGpuState *st, const Surf *s, int wide_draw, int *x0
     }
 }
 
-void PsxHd_CmdClip(const PsxHdCmd *c, int *x0, int *y0, int *x1, int *y1) {
+void PsxHd_CmdClipAt(const PsxHdCmd *c, int sc, int *x0, int *y0, int *x1, int *y1) {
     const Surf *s = c->s;
+    const PsxGpuState *st = &c->st;
+    int pitch = (s->w + 2 * s->m) * sc;
 
-    hd_clip(&c->st, s, c->wide, x0, y0, x1, y1);
+    *x0 = (st->clip_x0 - OX(s)) * sc;
+    *y0 = (st->clip_y0 - s->y) * sc;
+    *x1 = (st->clip_x1 + 1 - OX(s)) * sc - 1;
+    *y1 = (st->clip_y1 + 1 - s->y) * sc - 1;
+    if (c->wide && st->clip_x0 == s->x && st->clip_x1 == s->x + s->w - 1) {
+        *x0 = 0;
+        *x1 = pitch - 1;
+    }
     if (*x0 < 0) *x0 = 0;
     if (*y0 < 0) *y0 = 0;
-    if (*x1 > PITCH(s) - 1) *x1 = PITCH(s) - 1;
-    if (*y1 > s->h * scale - 1) *y1 = s->h * scale - 1;
+    if (*x1 > pitch - 1) *x1 = pitch - 1;
+    if (*y1 > s->h * sc - 1) *y1 = s->h * sc - 1;
+}
+
+void PsxHd_CmdClip(const PsxHdCmd *c, int *x0, int *y0, int *x1, int *y1) {
+    PsxHd_CmdClipAt(c, scale, x0, y0, x1, y1);
 }
 
 /* ---- pixels ---- */
@@ -1241,4 +1285,455 @@ int PsxHd_LastMargin(void) {
 
 unsigned PsxHd_Serial(void) {
     return serial;
+}
+
+/* ---- PR.34 smooth frames ---- */
+
+/* A frame is logged from its DrawOTag to the flush at its end (PsxHd_EndFrame). A command for
+ * another surface, or a copy into the frame's draw area (a picture uploaded into it), makes the
+ * frame one that is shown as it is; copies elsewhere (texture uploads refreshing an older surface)
+ * are left out. A frame that can be drawn again becomes a package (Pkg): three of them, so the
+ * game thread writes one that is neither the newest nor the one the window thread draws. The
+ * window thread draws the package again over its own picture (the base): the city map strips are
+ * drawn first and cover the screen, so whatever moved is drawn over; where a strip moved away from
+ * the screen edge, the base (this frame's picture) shows. */
+
+#define MAX_LAYERS 8
+#define PKGS 3
+#define MAX_PERIOD_NS 100000000ull /* a longer gap (a load, a pause): no blend */
+
+typedef struct {
+    int id;
+    uintptr_t start, end; /* packet addresses */
+    int x, y;             /* the layer's offset (VRAM pixels) */
+} Layer;
+
+typedef struct {
+    Cmd *cmd;
+    int n, cap;
+    Surf surf;       /* the surface the commands draw into (geometry only) */
+    void *base;      /* the frame's picture: w x h, top-left = surface pixel (ox, oy) */
+    int w, h, ox, oy;
+    int margin;      /* 16:9 margin of the picture, its pixels */
+    int scale, sharpen;
+    void *vram;      /* the VRAM buffer as the frame left it */
+    uint64_t t, period;
+    unsigned seq;
+} Pkg;
+
+static int smooth;
+static int log_ok;
+static Cmd *flog;
+static int nflog, flog_cap;
+static Surf *log_sp;    /* the frame's surface */
+static PsxGpuState log_st; /* the drawing state of its first command (the draw area) */
+static Layer lay_cur[MAX_LAYERS], lay_prev[MAX_LAYERS];
+static int nlay_cur, nlay_prev;
+static int scene_cur; /* PR.34: PsxHd_SmoothScene this frame */
+static uint64_t frame_time, last_end_t;
+static Pkg pkgs[PKGS];
+static int pkg_latest = -1, pkg_in_use = -1; /* under pkg_lock */
+static unsigned pkg_seq;
+static SDL_Mutex *pkg_lock;
+static void *win_tex, *win_sharp; /* window thread: the picture drawn last */
+static int win_w, win_h;
+static unsigned win_seq;
+static float win_alpha = 1.0f, win_drawn = -1.0f;
+static unsigned made_seq;  /* game thread: the package of the last frame, 0 none */
+static unsigned shown_seq; /* window thread: the package of the last picture, 0 none */
+static unsigned long long n_frames, n_pkgs, n_blend, n_tris;
+
+static int grow_cmds(Cmd **buf, int *cap, int n) {
+    if (n > *cap) {
+        int c = *cap ? *cap : 8192;
+        Cmd *q;
+
+        while (c < n) {
+            c *= 2;
+        }
+        q = realloc(*buf, (size_t)c * sizeof(Cmd));
+        if (q == NULL) {
+            return 0;
+        }
+        *buf = q;
+        *cap = c;
+    }
+    return 1;
+}
+
+static int layer_of(uintptr_t a) {
+    int i;
+
+    for (i = 0; i < nlay_cur; i++) {
+        if (a >= lay_cur[i].start && a < lay_cur[i].end) {
+            return lay_cur[i].id;
+        }
+    }
+    return 0;
+}
+
+static void smooth_log(void) {
+    int i;
+
+    if (!log_ok || !grow_cmds(&flog, &flog_cap, nflog + queued)) {
+        log_ok = 0;
+        return;
+    }
+    for (i = 0; i < queued; i++) {
+        const Cmd *c = &queue[i];
+
+        if (c->type == PSXHD_COPY) {
+            int x1 = c->u0 + c->w / scale - 1, y1 = c->v0 + c->h / scale - 1;
+
+            if (c->s == log_sp && c->u0 <= log_st.clip_x1 && x1 >= log_st.clip_x0 && c->v0 <= log_st.clip_y1 &&
+                y1 >= log_st.clip_y0) {
+                log_ok = 0;
+                return;
+            }
+            continue;
+        }
+        if (log_sp == NULL && c->type == PSXHD_FILL) {
+            flog[nflog++] = *c; /* kept if it fills the frame's surface */
+            continue;
+        }
+        if (log_sp == NULL) {
+            int j, m = 0;
+
+            log_sp = c->s;
+            log_st = c->st;
+            for (j = 0; j < nflog; j++) {
+                if (flog[j].s == log_sp) {
+                    flog[m++] = flog[j];
+                }
+            }
+            nflog = m;
+        }
+        if (c->s != log_sp) {
+            log_ok = 0;
+            return;
+        }
+        flog[nflog++] = *c;
+    }
+}
+
+static void smooth_begin(void) {
+    logging = 1;
+    log_ok = 1;
+    nflog = 0;
+    log_sp = NULL;
+}
+
+/* smooth frames use the PGXP vertices whether no wobble is on or not (backend/psxgpu.c) */
+int PsxHd_SmoothActive(void) {
+    return smooth && gpu;
+}
+
+void PsxHd_SetSmooth(int on) {
+    on = on != 0;
+    if (on != smooth) {
+        flush();
+        smooth = on;
+        logging = 0;
+        nlay_cur = nlay_prev = 0;
+        last_end_t = 0;
+        if (pkg_lock == NULL) {
+            pkg_lock = SDL_CreateMutex();
+        }
+        SDL_LockMutex(pkg_lock);
+        pkg_latest = -1;
+        SDL_UnlockMutex(pkg_lock);
+    }
+}
+
+int PsxHd_Smooth(void) {
+    return smooth;
+}
+
+void PsxHd_SmoothLayer(int id, uintptr_t start, uintptr_t end, int x, int y) {
+    if (!PsxHd_SmoothActive() || nlay_cur == MAX_LAYERS) {
+        return;
+    }
+    lay_cur[nlay_cur].id = id;
+    lay_cur[nlay_cur].start = start;
+    lay_cur[nlay_cur].end = end;
+    lay_cur[nlay_cur].x = x;
+    lay_cur[nlay_cur].y = y;
+    nlay_cur++;
+}
+
+void PsxHd_SmoothScene(void) {
+    scene_cur = PsxHd_SmoothActive();
+}
+
+void PsxHd_SetFrameTime(uint64_t ns) {
+    frame_time = ns;
+}
+
+static const Layer *find_layer(const Layer *l, int n, int id) {
+    int i;
+
+    for (i = 0; i < n; i++) {
+        if (l[i].id == id) {
+            return &l[i];
+        }
+    }
+    return NULL;
+}
+
+/* the vertices of c that can blend: a precise triangle's 3, a line's 2 (PR.34), else 0 */
+static int blend_verts(const Cmd *c) {
+    return c->type == PSXHD_TRI ? (c->precise ? 3 : 0) : c->type == PSXHD_LINE ? 2 : 0;
+}
+
+/* the frame-before positions of the logged commands */
+static void blend_data(void) {
+    const float lim = Pgxp_MoveLimit(); /* VRAM pixels a vertex may move between two frames and still blend */
+    int i, k;
+
+    /* PR.34: a vertex moved too far cuts its whole instance (no half-blended model) */
+    for (i = 0; i < nflog; i++) {
+        const Cmd *c = &flog[i];
+        int nv = blend_verts(c);
+
+        if (nv > 0) {
+            for (k = 0; k < nv; k++) {
+                const PsxVtx *v = &c->v[k];
+                float fx, fy, fz;
+
+                if (v->src >= 0 && Pgxp_PrevPos(v->src, &fx, &fy, &fz) &&
+                    (fabsf(fx + (float)c->st.ofs_x - v->px) >= lim ||
+                     fabsf(fy + (float)c->st.ofs_y - v->py) >= lim)) {
+                    Pgxp_CutSrc(v->src);
+                }
+            }
+        }
+    }
+    for (i = 0; i < nflog; i++) {
+        Cmd *c = &flog[i];
+
+        c->blend = 0;
+        c->dx = 0;
+        c->dy = 0;
+        if (blend_verts(c) > 0) {
+            int ok = 1, nv = blend_verts(c);
+
+            for (k = 0; k < nv && ok; k++) {
+                PsxVtx *v = &c->v[k];
+                float fx = 0, fy = 0, fz = 0;
+
+                ok = v->src >= 0 && Pgxp_PrevPos(v->src, &fx, &fy, &fz);
+                v->qx = fx + (float)c->st.ofs_x;
+                v->qy = fy + (float)c->st.ofs_y;
+                v->qz = fz;
+                /* one frame's move this far on screen is a cut, not a motion */
+                ok = ok && fabsf(v->qx - v->px) < lim && fabsf(v->qy - v->py) < lim;
+            }
+            c->blend = ok;
+            if (c->type == PSXHD_TRI) {
+                n_tris++;
+                n_blend += (unsigned long long)ok;
+            }
+        }
+        if (c->layer != 0) {
+            const Layer *a = find_layer(lay_prev, nlay_prev, c->layer), *b = find_layer(lay_cur, nlay_cur, c->layer);
+
+            if (a != NULL && b != NULL) {
+                c->dx = (float)(a->x - b->x);
+                c->dy = (float)(a->y - b->y);
+            }
+        }
+    }
+}
+
+static void package(uint64_t t, uint64_t period) {
+    Surf *s = log_sp;
+    int whole = log_st.clip_x0 == s->x && log_st.clip_x1 == s->x + s->w - 1;
+    int bx = whole ? 0 : (log_st.clip_x0 - OX(s)) * scale, by = (log_st.clip_y0 - s->y) * scale;
+    int bw = whole ? PITCH(s) : (log_st.clip_x1 - log_st.clip_x0 + 1) * scale;
+    int bh = (log_st.clip_y1 - log_st.clip_y0 + 1) * scale;
+    Pkg *p;
+    int slot, i;
+
+    SDL_LockMutex(pkg_lock);
+    for (slot = 0; slot == pkg_latest || slot == pkg_in_use; slot++) {
+    }
+    SDL_UnlockMutex(pkg_lock);
+    p = &pkgs[slot];
+    if (!grow_cmds(&p->cmd, &p->cap, nflog) || bw <= 0 || bh <= 0) {
+        return;
+    }
+    memcpy(p->cmd, flog, (size_t)nflog * sizeof(Cmd));
+    p->n = nflog;
+    p->surf = *s;
+    p->surf.px = NULL;
+    p->surf.tex = NULL;
+    for (i = 0; i < nflog; i++) {
+        p->cmd[i].s = &p->surf;
+    }
+    if (p->base == NULL || p->w != bw || p->h != bh) {
+        if (p->base != NULL) {
+            PsxHw_Release(p->base);
+        }
+        p->base = PsxHw_Create(bw, bh);
+        p->w = bw;
+        p->h = bh;
+    }
+    if (p->base == NULL) {
+        return;
+    }
+    PsxHw_Copy(s->tex, bx, by, bw, bh, p->base);
+    p->vram = PsxHw_VramCopy(p->vram);
+    if (p->vram == NULL) {
+        return;
+    }
+    p->ox = bx;
+    p->oy = by;
+    p->margin = whole ? s->m * scale : 0;
+    p->scale = scale;
+    p->sharpen = PsxHd_SharpenActive();
+    p->t = t;
+    p->period = period;
+    p->seq = ++pkg_seq;
+    made_seq = p->seq;
+    SDL_LockMutex(pkg_lock);
+    pkg_latest = slot;
+    SDL_UnlockMutex(pkg_lock);
+    n_pkgs++;
+}
+
+void PsxHd_EndFrame(void) {
+    uint64_t t, period;
+    int ok;
+
+    if (!logging) {
+        return;
+    }
+    flush();
+    logging = 0;
+    t = frame_time != 0 ? frame_time : SDL_GetTicksNS();
+    period = last_end_t != 0 && t > last_end_t ? t - last_end_t : 0;
+    last_end_t = t;
+    n_frames++;
+    ok = log_ok && nflog > 0 && log_sp != NULL && log_sp->tex != NULL && (nlay_cur > 0 || scene_cur);
+    made_seq = 0;
+    if (ok) {
+        blend_data();
+        package(t, period);
+    } else {
+        SDL_LockMutex(pkg_lock);
+        pkg_latest = -1;
+        SDL_UnlockMutex(pkg_lock);
+    }
+    memcpy(lay_prev, lay_cur, sizeof(lay_cur));
+    nlay_prev = nlay_cur;
+    nlay_cur = 0;
+    scene_cur = 0;
+    nflog = 0;
+    log_ok = 1;
+    log_sp = NULL;
+    if ((n_frames & 0x3FF) == 0) {
+        printf("[gpu] smooth: %llu frames, %llu drawn again, 3D triangles blended %.1f%%\n", n_frames, n_pkgs,
+               n_tris != 0 ? 100.0 * (double)n_blend / (double)n_tris : 0.0);
+        fflush(stdout);
+    }
+}
+
+/* the package's picture at alpha into the window thread's textures */
+static int draw_pkg(Pkg *p, float alpha) {
+    if (win_tex == NULL || win_w != p->w || win_h != p->h) {
+        if (win_tex != NULL) {
+            PsxHw_Release(win_tex);
+        }
+        if (win_sharp != NULL) {
+            PsxHw_Release(win_sharp);
+        }
+        win_sharp = NULL;
+        win_tex = PsxHw_Create(p->w, p->h);
+        win_w = p->w;
+        win_h = p->h;
+        win_drawn = -1.0f;
+        if (win_tex == NULL) {
+            return 0;
+        }
+    }
+    if (p->sharpen > 0 && win_sharp == NULL) {
+        win_sharp = PsxHw_Create(p->w, p->h);
+        win_drawn = -1.0f;
+        if (win_sharp == NULL) {
+            return 0;
+        }
+    }
+    if (p->seq != win_seq || alpha != win_drawn) {
+        PsxHw_Replay(p->cmd, p->n, p->scale, p->ox, p->oy, alpha, p->vram, p->base, win_tex, p->w, p->h);
+        if (p->sharpen > 0) {
+            PsxHw_SharpenWin(win_tex, 0, 0, p->w, p->h, win_sharp, p->sharpen);
+        }
+        win_seq = p->seq;
+        win_drawn = alpha;
+    }
+    return 1;
+}
+
+/* the newest package (window thread: kept until the next call), or NULL */
+static Pkg *take_pkg(void) {
+    Pkg *p = NULL;
+
+    if (pkg_lock == NULL) {
+        return NULL;
+    }
+    SDL_LockMutex(pkg_lock);
+    if (pkg_latest >= 0) {
+        pkg_in_use = pkg_latest;
+        p = &pkgs[pkg_in_use];
+    }
+    SDL_UnlockMutex(pkg_lock);
+    return p;
+}
+
+int PsxHd_SmoothPicture(uint64_t t, void **tex, int *w, int *h, int *margin) {
+    Pkg *p = take_pkg();
+    float alpha = 1.0f;
+
+    win_alpha = 1.0f;
+    shown_seq = 0;
+    if (p == NULL) {
+        return 0;
+    }
+    if (p->period != 0 && p->period < MAX_PERIOD_NS) {
+        double a = t > p->t ? (double)(t - p->t) / (double)p->period : 0.0;
+        alpha = a > 1.0 ? 1.0f : (float)a;
+    }
+    if (!draw_pkg(p, alpha)) {
+        return 0;
+    }
+    win_alpha = alpha;
+    shown_seq = p->seq;
+    *tex = p->sharpen > 0 ? win_sharp : win_tex;
+    *w = p->w;
+    *h = p->h;
+    *margin = p->margin;
+    return 1;
+}
+
+float PsxHd_SmoothAlpha(void) {
+    return win_alpha;
+}
+
+unsigned PsxHd_PackageSeq(void) {
+    return made_seq;
+}
+
+unsigned PsxHd_SmoothSeq(void) {
+    return shown_seq;
+}
+
+int PsxHd_SmoothRead(float alpha, uint32_t *out, int *w, int *h) {
+    Pkg *p = take_pkg();
+
+    if (p == NULL || !draw_pkg(p, alpha)) {
+        return 0;
+    }
+    *w = p->w;
+    *h = p->h;
+    return out == NULL || PsxHw_Read(p->sharpen > 0 ? win_sharp : win_tex, 0, 0, p->w, p->h, out);
 }

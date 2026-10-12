@@ -325,6 +325,11 @@ void Stg40_ProjectGrid(Stg40FloorWork *w) {
     n.lo = rows;
     w->gridCols = cols;
     w->gridRows = n.lo;
+#ifdef DW2_NATIVE
+    /* PR.34 smooth frames: the view moves the grid's vertices inside a tile (periods 0xA00 x,
+     * 0x800 z), not its matrix */
+    Host_SmoothLattice(0xA00, 0, 0x800);
+#endif
     vec.vy = 0;
     t = (Stg40_RootState->viewY & 0x3F) << 11;
     if (t < 0) {
@@ -707,6 +712,9 @@ void Stg40_FloorDraw(Actor *a0) {
     if (n <= 0 || (Dung_StatePtr->dungeonIdx == 0x10 && n == 0x75)) {
         f = 0;
     }
+#ifdef DW2_NATIVE
+    Host_SmoothScene(); /* PR.34: dungeon frames are drawn again between frames */
+#endif
     if (f) {
         Stg40_DrawFloorTiles(w);
     }

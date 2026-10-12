@@ -200,6 +200,7 @@ void display_tab(void) {
     bool pgxp = Settings_Get(SET_PGXP) != 0;
     int renderer = Settings_Get(SET_RENDERER);
     int sharpen = Settings_Get(SET_SHARPEN);
+    bool smooth = Settings_Get(SET_SMOOTH) != 0;
     bool hint = Settings_Get(SET_TITLE_HINT) != 0;
 
     ImGui::SeparatorText("Picture");
@@ -222,6 +223,11 @@ void display_tab(void) {
     } else {
         ImGui::TextDisabled("Contrast adaptive sharpening of the scaled picture.");
     }
+    if (ImGui::Checkbox("Smooth frames (F9)", &smooth)) {
+        Host_RequestSetting(SET_SMOOTH, smooth);
+    }
+    ImGui::TextDisabled("Pictures at the monitor's refresh rate, blended between game frames in the");
+    ImGui::TextDisabled("city, dungeons and battles (GPU renderer). The game itself runs as before.");
     if (ImGui::Checkbox("Show \"Press F1 for settings\" on the title", &hint)) {
         Settings_Set(SET_TITLE_HINT, hint);
     }
@@ -276,7 +282,7 @@ void controls_tab(void) {
         ImGui::TextColored(ImVec4(0.5f, 0.9f, 1.0f, 1.0f), "%s: press a %s (Esc cancels)",
                            Settings_ButtonName(g_cap_bit), g_cap_slot < 2 ? "key" : "gamepad button");
     } else {
-        ImGui::TextDisabled("Esc, Tab, F1, F2, F5, F6, F7, F8, F11 and F12 are reserved.");
+        ImGui::TextDisabled("Esc, Tab, F1, F2, F3, F5, F6, F7, F8, F9, F11 and F12 are reserved.");
     }
     if (ImGui::BeginTable("binds", 4, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("PS1 button", ImGuiTableColumnFlags_WidthStretch, 1.0f);

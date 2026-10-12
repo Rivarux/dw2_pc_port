@@ -306,6 +306,20 @@ void Stg30_CameraDraw(Actor *a0) {
     rv.super = &w->coord;
     GsSetProjection(w->projection);
     GsSetRefView2(&rv);
+#ifdef DW2_NATIVE
+    {
+        /* PR.34: battle frames are drawn again between frames; shots 10..23 and 25 (and the
+         * states outside 1) are set at once, the others ease or spin */
+        int v[13];
+        s32 s = a0->stateLevel1;
+
+        v[0] = w->vpx, v[1] = w->vpy, v[2] = w->vpz, v[3] = w->vrx, v[4] = w->vry, v[5] = w->vrz;
+        v[6] = w->projection, v[7] = w->originX, v[8] = w->originY, v[9] = w->originZ;
+        v[10] = w->rotX, v[11] = w->rotY, v[12] = w->rotZ;
+        Host_SmoothScene();
+        Host_SmoothCamera(v, 13, a0->stateLevel0 != 1 || (s >= 10 && s <= 23) || s == 25);
+    }
+#endif
 }
 
 void Stg30_SetCameraShot(u8 state) {

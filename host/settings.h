@@ -24,6 +24,7 @@ enum {
     SET_TITLE_HINT, /* 0 / 1: "Press F1 for settings" on the title (PR.10) */
     SET_SPEED,      /* PR.28 speed-up while unlocked (F3): 2..8 x, 0 = no limit */
     SET_UPDATE_CHECK, /* 0 / 1: PR.30 ask GitHub for a newer release at start */
+    SET_SMOOTH,       /* 0 / 1: PR.34 smooth frames (F9), on by default */
     SET_COUNT
 };
 enum { SET_RENDERER_GPU, SET_RENDERER_SOFT };

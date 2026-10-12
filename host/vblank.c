@@ -3,6 +3,7 @@
 #include "host/host.h"
 #include "host/host_sdl.h"
 #include "host/settings.h"
+#include "backend/psxgpu_hd.h"
 #include "backend/xadec.h"
 #include "psyq/psyq_vblank.h"
 
@@ -119,6 +120,7 @@ void Host_VBlank(void) {
         XaDec_SetSpeed(mult);
     }
     if (fast || cur_mult == 0) {
+        PsxHd_SetFrameTime(now); /* PR.34: no clock, the time it runs */
         run_vblank();
         host_side();
         return;
@@ -128,6 +130,7 @@ void Host_VBlank(void) {
         now = SDL_GetTicksNS();
     }
     for (n = 0; n < MAX_CATCH_UP && now >= deadline(next); n++) {
+        PsxHd_SetFrameTime(deadline(next)); /* PR.34: a frame drawn after it shows from it */
         run_vblank();
         next++;
     }

@@ -22,6 +22,7 @@
  * draw / display buffer is passed on after the 1x work, which stays unchanged. */
 
 uint16_t PsxGpu_Vram[PSXGPU_VRAM_H][PSXGPU_VRAM_W];
+uintptr_t PsxHd_Packet; /* PR.34: set by libgpu's DrawOTag (backend/psxgpu_hd.h) */
 
 static PsxGpuState st;
 
@@ -306,19 +307,22 @@ static void polygon(const uint32_t *w, int op) {
          * one (no depth) for the others. A vertex shared by two polygons normally gets the same
          * answer in both (same point, or the same depth picks it), so edges stay closed. */
         int px[4], py[4], hit = 0, precise;
+        int src[4] = { -1, -1, -1, -1 };
         float fx[4], fy[4], fz[4];
         for (k = 0; k < nv; k++) {
             px[k] = v[k].x - st.ofs_x;
             py[k] = v[k].y - st.ofs_y;
         }
-        if (PsxHd_Pgxp()) {
-            hit = Pgxp_LookupPoly(nv, px, py, fx, fy, fz);
+        if (PsxHd_Pgxp() || PsxHd_SmoothActive()) { /* PR.34: smooth frames draw no wobble too */
+            hit = Pgxp_LookupPoly(nv, px, py, fx, fy, fz, src);
         }
         for (k = 0; k < nv; k++) {
+            v[k].src = -1;
             if (hit & (1 << k)) {
                 v[k].px = fx[k] + (float)st.ofs_x;
                 v[k].py = fy[k] + (float)st.ofs_y;
                 v[k].pz = fz[k];
+                v[k].src = src[k]; /* PR.34 smooth frames */
             } else {
                 v[k].px = (float)v[k].x;
                 v[k].py = (float)v[k].y;
@@ -523,6 +527,23 @@ static void line(const uint32_t *w, int op) {
         p->x = sign11(w[i] & 0xFFFF) + st.ofs_x;
         p->y = sign11(w[i] >> 16) + st.ofs_y;
         p->u = p->v = 0;
+        p->src = -1;
+        p->px = (float)p->x;
+        p->py = (float)p->y;
+        p->pz = 0;
+        if (PsxHd_SmoothActive()) {
+            /* PR.34: the end point's source, so a line (battle wireframes) moves with the
+             * models between frames; its precise position is used only then */
+            int lx = p->x - st.ofs_x, ly = p->y - st.ofs_y, src = -1;
+            float fx, fy, fz;
+
+            if (Pgxp_LookupPoly(1, &lx, &ly, &fx, &fy, &fz, &src) & 1) {
+                p->px = fx + (float)st.ofs_x;
+                p->py = fy + (float)st.ofs_y;
+                p->pz = fz;
+                p->src = src;
+            }
+        }
         i++;
         if (k > 0) {
             line_seg(&v[(k - 1) & 1], p, gouraud, semi, abr);

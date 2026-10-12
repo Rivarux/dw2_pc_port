@@ -113,6 +113,7 @@ void DrawOTag(u_long *p) {
         int len = tag >> 24;
 
         if (len != 0) {
+            PsxHd_Packet = (uintptr_t)p; /* PR.34: the 2D layers by packet address */
             PsxGpu_Gp0((const uint32_t *)(p + 1), len);
         }
         if ((tag & 0xFFFFFF) == 0xFFFFFF) {
@@ -124,7 +125,9 @@ void DrawOTag(u_long *p) {
             break;
         }
     }
+    PsxHd_Packet = 0;
     Pgxp_EndFrame();
+    PsxHd_EndFrame(); /* PR.34: after Pgxp_EndFrame (the frame-before positions) */
 }
 
 DRAWENV *PutDrawEnv(DRAWENV *env) {

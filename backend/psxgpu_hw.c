@@ -17,7 +17,13 @@
  * shader quarters the colour); a textured semi-transparent primitive is drawn twice (opaque texels
  * without blending, then semi-transparent texels blended), so each pixel is written once as on
  * the PS1. Positions: a surface pixel X samples coordinate X (as in the software HD rasterizer),
- * so vertices go to (p - origin) * S + 0.5 in framebuffer pixels. */
+ * so vertices go to (p - origin) * S + 0.5 in framebuffer pixels.
+ *
+ * PR.34 smooth frames: the vertex building and submit state is per thread (Ctx): the game thread
+ * draws the HD surfaces (game_ctx), the window thread draws the smooth pictures (win_ctx,
+ * PsxHw_Replay: a logged frame drawn again into a picture texture whose origin is a point of the
+ * surface, positions blended between the frame before and the frame by alpha). Pipelines, the
+ * sharpen pipeline and the device are shared (SDL_GPU command buffers per thread). */
 
 typedef struct {
     float x, y, w;
@@ -41,24 +47,29 @@ enum { F_DITHER = 1, F_BLOCK = 2, F_CLAMP = 0x200, F_SETMASK = 0x100 };
 #define F_ABR(a) ((uint32_t)(a) << 4)
 #define F_KIND(k) ((uint32_t)(k) << 6)
 
+typedef struct {
+    Vert *verts;
+    int nverts, verts_cap;
+    Draw *draws;
+    int ndraws, draws_cap;
+    SDL_GPUBuffer *vbuf;
+    SDL_GPUTransferBuffer *vtb;
+    Uint32 vcap; /* bytes of vbuf / vtb */
+    SDL_GPUFence *last_fence;
+    int ox, oy;  /* PR.34: the target's origin in surface pixels */
+    float alpha; /* PR.34: blend of logged positions, 1 = as drawn */
+} Ctx;
+
 static SDL_GPUDevice *dev;
 static SDL_GPUGraphicsPipeline *pipes[5];
 static SDL_GPUBuffer *vram_buf;
 static SDL_GPUTransferBuffer *vram_tb;
-static SDL_GPUBuffer *vbuf;
-static SDL_GPUTransferBuffer *vtb;
-static Uint32 vcap; /* bytes of vbuf / vtb */
 static SDL_GPUTransferBuffer *read_tb;
 static Uint32 read_cap;
-static SDL_GPUFence *last_fence;
 static SDL_GPUGraphicsPipeline *sharpen_pipe; /* PR.2b */
 static SDL_GPUSampler *sharpen_sampler;
 static int dirty_y0, dirty_y1 = PSXGPU_VRAM_H; /* VRAM rows to upload before the next batch */
-
-static Vert *verts;
-static int nverts, verts_cap;
-static Draw *draws;
-static int ndraws, draws_cap;
+static Ctx game_ctx = { .alpha = 1.0f }, win_ctx = { .alpha = 1.0f };
 
 static SDL_GPUShader *make_shader(const uint32_t *code, size_t size, SDL_GPUShaderStage stage, int storage) {
     SDL_GPUShaderCreateInfo si;
@@ -227,10 +238,21 @@ void PsxHw_Shutdown(void) {
     if (dev == NULL) {
         return;
     }
-    if (last_fence != NULL) {
-        SDL_WaitForGPUFences(dev, true, &last_fence, 1);
-        SDL_ReleaseGPUFence(dev, last_fence);
-        last_fence = NULL;
+    for (i = 0; i < 2; i++) {
+        Ctx *x = i == 0 ? &game_ctx : &win_ctx;
+
+        if (x->last_fence != NULL) {
+            SDL_WaitForGPUFences(dev, true, &x->last_fence, 1);
+            SDL_ReleaseGPUFence(dev, x->last_fence);
+            x->last_fence = NULL;
+        }
+        if (x->vbuf != NULL) {
+            SDL_ReleaseGPUBuffer(dev, x->vbuf);
+            SDL_ReleaseGPUTransferBuffer(dev, x->vtb);
+        }
+        x->vbuf = NULL;
+        x->vtb = NULL;
+        x->vcap = 0;
     }
     for (i = 0; i < 5; i++) {
         SDL_ReleaseGPUGraphicsPipeline(dev, pipes[i]);
@@ -241,16 +263,9 @@ void PsxHw_Shutdown(void) {
     sharpen_sampler = NULL;
     SDL_ReleaseGPUBuffer(dev, vram_buf);
     SDL_ReleaseGPUTransferBuffer(dev, vram_tb);
-    if (vbuf != NULL) {
-        SDL_ReleaseGPUBuffer(dev, vbuf);
-        SDL_ReleaseGPUTransferBuffer(dev, vtb);
-    }
     if (read_tb != NULL) {
         SDL_ReleaseGPUTransferBuffer(dev, read_tb);
     }
-    vbuf = NULL;
-    vtb = NULL;
-    vcap = 0;
     read_tb = NULL;
     read_cap = 0;
     dev = NULL;
@@ -304,52 +319,74 @@ void PsxHw_MarkDirty(int y, int h) {
 
 /* ---- queue to triangles ---- */
 
-static void emit(PsxHdSurf *s, int pipe, const SDL_Rect *sc, const Vert *v, int n) {
-    Draw *d = ndraws > 0 ? &draws[ndraws - 1] : NULL;
+static void emit(Ctx *x, PsxHdSurf *s, int pipe, const SDL_Rect *scin, const Vert *v, int n) {
+    Draw *d = x->ndraws > 0 ? &x->draws[x->ndraws - 1] : NULL;
+    SDL_Rect scr = *scin, *sc = &scr;
+    int i;
 
-    if (nverts + n > verts_cap) {
-        int cap = verts_cap ? verts_cap * 2 : 1 << 16;
+    if (x->ox != 0 || x->oy != 0) {
+        /* PR.34: a target whose origin is surface pixel (ox, oy) */
+        sc->x -= x->ox;
+        sc->y -= x->oy;
+        if (sc->x < 0) {
+            sc->w += sc->x;
+            sc->x = 0;
+        }
+        if (sc->y < 0) {
+            sc->h += sc->y;
+            sc->y = 0;
+        }
+        if (sc->w <= 0 || sc->h <= 0) {
+            return;
+        }
+    }
+    if (x->nverts + n > x->verts_cap) {
+        int cap = x->verts_cap ? x->verts_cap * 2 : 1 << 16;
         Vert *nv;
-        while (cap < nverts + n) {
+        while (cap < x->nverts + n) {
             cap *= 2;
         }
-        nv = realloc(verts, (size_t)cap * sizeof(Vert));
+        nv = realloc(x->verts, (size_t)cap * sizeof(Vert));
         if (nv == NULL) {
             return;
         }
-        verts = nv;
-        verts_cap = cap;
+        x->verts = nv;
+        x->verts_cap = cap;
     }
     if (d == NULL || d->s != s || d->pipe != pipe || d->scissor.x != sc->x || d->scissor.y != sc->y ||
         d->scissor.w != sc->w || d->scissor.h != sc->h) {
-        if (ndraws == draws_cap) {
-            int cap = draws_cap ? draws_cap * 2 : 1024;
-            Draw *nd = realloc(draws, (size_t)cap * sizeof(Draw));
+        if (x->ndraws == x->draws_cap) {
+            int cap = x->draws_cap ? x->draws_cap * 2 : 1024;
+            Draw *nd = realloc(x->draws, (size_t)cap * sizeof(Draw));
             if (nd == NULL) {
                 return;
             }
-            draws = nd;
-            draws_cap = cap;
+            x->draws = nd;
+            x->draws_cap = cap;
         }
-        d = &draws[ndraws++];
+        d = &x->draws[x->ndraws++];
         d->s = s;
         d->pipe = pipe;
         d->scissor = *sc;
-        d->first = (Uint32)nverts;
+        d->first = (Uint32)x->nverts;
         d->count = 0;
     }
-    memcpy(&verts[nverts], v, (size_t)n * sizeof(Vert));
-    nverts += n;
+    memcpy(&x->verts[x->nverts], v, (size_t)n * sizeof(Vert));
+    for (i = 0; i < n && (x->ox != 0 || x->oy != 0); i++) {
+        x->verts[x->nverts + i].x -= (float)x->ox;
+        x->verts[x->nverts + i].y -= (float)x->oy;
+    }
+    x->nverts += n;
     d->count += (Uint32)n;
 }
 
 /* Emits n vertices once, or twice for a textured semi-transparent primitive (opaque texels, then
  * semi-transparent texels blended). */
-static void emit_prim(const PsxHdCmd *c, Vert *v, int n, int textured) {
+static void emit_prim(Ctx *x, const PsxHdCmd *c, int scale, Vert *v, int n, int textured) {
     SDL_Rect sc;
     int x0, y0, x1, y1, i;
 
-    PsxHd_CmdClip(c, &x0, &y0, &x1, &y1);
+    PsxHd_CmdClipAt(c, scale, &x0, &y0, &x1, &y1);
     if (x0 > x1 || y0 > y1) {
         return;
     }
@@ -358,14 +395,14 @@ static void emit_prim(const PsxHdCmd *c, Vert *v, int n, int textured) {
     sc.w = x1 - x0 + 1;
     sc.h = y1 - y0 + 1;
     if (!c->semi) {
-        emit(c->s, 0, &sc, v, n);
+        emit(x, c->s, 0, &sc, v, n);
         return;
     }
     if (textured) {
         for (i = 0; i < n; i++) {
             v[i].par[2] |= F_PASS(1);
         }
-        emit(c->s, 0, &sc, v, n);
+        emit(x, c->s, 0, &sc, v, n);
         for (i = 0; i < n; i++) {
             v[i].par[2] ^= F_PASS(1) ^ F_PASS(2);
         }
@@ -374,7 +411,7 @@ static void emit_prim(const PsxHdCmd *c, Vert *v, int n, int textured) {
             v[i].par[2] |= F_PASS(2);
         }
     }
-    emit(c->s, 1 + c->abr, &sc, v, n);
+    emit(x, c->s, 1 + c->abr, &sc, v, n);
 }
 
 static uint32_t tex_bits(const PsxTex *t) {
@@ -398,7 +435,7 @@ static void set_par(Vert *v, int n, uint32_t tex, uint32_t win, uint32_t fl, uin
     }
 }
 
-static void tri(const PsxHdCmd *c, int scale) {
+static void tri(Ctx *x, const PsxHdCmd *c, int scale) {
     const PsxGpuState *st = &c->st;
     const PsxTex *t = c->textured ? &c->tex : NULL;
     PsxHdSurf *s = c->s;
@@ -408,6 +445,8 @@ static void tri(const PsxHdCmd *c, int scale) {
     int block = 0;
     uint32_t fl = 0, lim = 0;
     Vert v[3];
+    float a = x->alpha, k = 1.0f - x->alpha;
+    int blend = a < 1.0f && c->blend, shift = a < 1.0f && !c->precise && (c->dx != 0 || c->dy != 0);
     int i;
 
     if (t != NULL && !c->precise) {
@@ -423,9 +462,10 @@ static void tri(const PsxHdCmd *c, int scale) {
     }
     if (block) {
         int umin = p[0].u < p[1].u ? p[0].u : p[1].u, umax = p[0].u > p[1].u ? p[0].u : p[1].u;
+        /* PR.34: a moved 2D layer triangle: no 1x block rule (see rect), the clamp stays */
         umin = p[2].u < umin ? p[2].u : umin;
         umax = p[2].u > umax ? p[2].u : umax;
-        fl |= F_BLOCK | F_CLAMP;
+        fl |= (shift ? 0 : F_BLOCK) | F_CLAMP;
         lim = (uint32_t)umin | (uint32_t)umax << 8;
     }
     if (st->set_mask) {
@@ -433,14 +473,22 @@ static void tri(const PsxHdCmd *c, int scale) {
     }
     for (i = 0; i < 3; i++) {
         const PsxVtx *q = c->gouraud ? &p[i] : &p[0];
-        if (c->precise) {
+        if (blend) {
+            /* PR.34: between the frame before (q) and this frame (p) */
+            v[i].x = (p[i].qx * k + p[i].px * a - ox) * S + 0.5f;
+            v[i].y = (p[i].qy * k + p[i].py * a - oy) * S + 0.5f;
+        } else if (c->precise) {
             v[i].x = (p[i].px - ox) * S + 0.5f;
             v[i].y = (p[i].py - oy) * S + 0.5f;
+        } else if (shift) {
+            /* PR.34: a 2D layer moved by its scroll (backend/psxgpu_hd.c PsxHd_SmoothLayer) */
+            v[i].x = ((float)p[i].x + c->dx * k - ox) * S + 0.5f;
+            v[i].y = ((float)p[i].y + c->dy * k - oy) * S + 0.5f;
         } else {
             v[i].x = ((float)p[i].x - ox) * S + 0.5f;
             v[i].y = ((float)p[i].y - oy) * S + 0.5f;
         }
-        v[i].w = persp ? p[i].pz : 1.0f;
+        v[i].w = persp ? (blend ? p[i].qz * k + p[i].pz * a : p[i].pz) : 1.0f;
         v[i].u = (float)p[i].u;
         v[i].v = (float)p[i].v;
         v[i].r = (uint8_t)q->r;
@@ -449,7 +497,7 @@ static void tri(const PsxHdCmd *c, int scale) {
         v[i].a = 0;
     }
     set_par(v, 3, t != NULL ? tex_bits(t) : 0, win_bits(st), fl, lim);
-    emit_prim(c, v, 3, t != NULL);
+    emit_prim(x, c, scale, v, 3, t != NULL);
 }
 
 /* Two triangles of the quad a b c d (a b on one side, c d on the other). */
@@ -474,11 +522,13 @@ static void corner(Vert *v, float x, float y, float u, float t, int r, int g, in
     v->b = (uint8_t)b;
 }
 
-static void rect(const PsxHdCmd *c, int scale) {
+static void rect(Ctx *x, const PsxHdCmd *c, int scale) {
     const PsxGpuState *st = &c->st;
     const PsxTex *t = c->textured ? &c->tex : NULL;
     PsxHdSurf *s = c->s;
-    float x0 = (float)((c->x0 - (s->x - s->m)) * scale), y0 = (float)((c->y0 - s->y) * scale);
+    float back = x->alpha < 1.0f ? 1.0f - x->alpha : 0.0f; /* PR.34: a 2D layer moved by its scroll */
+    float x0 = (float)((c->x0 - (s->x - s->m)) * scale) + c->dx * back * (float)scale;
+    float y0 = (float)((c->y0 - s->y) * scale) + c->dy * back * (float)scale;
     float x1 = x0 + (float)(c->w * scale), y1 = y0 + (float)(c->h * scale);
     /* the texel of 1x column xx is u0 + xx (u0 - xx flipped: the left edge one texel up) */
     float ul = st->flip_x ? (float)(c->u0 + 1) : (float)c->u0;
@@ -487,18 +537,31 @@ static void rect(const PsxHdCmd *c, int scale) {
     float vb = st->flip_y ? (float)(c->v0 + 1 - c->h) : (float)(c->v0 + c->h);
     Vert k[4], v[6];
 
+    uint32_t fl = F_BLOCK, lim = 0;
+
     corner(&k[0], x0, y0, ul, vt, c->r, c->g, c->b);
     corner(&k[1], x1, y0, ur, vt, c->r, c->g, c->b);
     corner(&k[2], x0, y1, ul, vb, c->r, c->g, c->b);
     corner(&k[3], x1, y1, ur, vb, c->r, c->g, c->b);
     quad(v, &k[0], &k[1], &k[2], &k[3]);
-    set_par(v, 6, t != NULL ? tex_bits(t) : 0, win_bits(st), F_BLOCK | (st->set_mask ? F_SETMASK : 0), 0);
-    emit_prim(c, v, 6, t != NULL);
+    if (back > 0.0f && (c->dx != 0 || c->dy != 0)) {
+        /* PR.34: moved by a fraction of a 1x pixel. The block rule reads the texel of the 1x
+         * pixel grid of the surface, which is not the rect's grid any more: at the edges it read
+         * one texel outside the rect (black seams between the city map strips). The texels move
+         * with the rect instead, kept inside its columns. */
+        fl = 0;
+        if (!st->flip_x) {
+            fl = F_CLAMP;
+            lim = (uint32_t)(c->u0 & 255) | (uint32_t)((c->u0 + c->w - 1) & 255) << 8;
+        }
+    }
+    set_par(v, 6, t != NULL ? tex_bits(t) : 0, win_bits(st), fl | (st->set_mask ? F_SETMASK : 0), lim);
+    emit_prim(x, c, scale, v, 6, t != NULL);
 }
 
 /* A line S pixels thick: a parallelogram from the first end pixel's block to the last one's
  * along the major axis, S wide across it (backend/psxgpu_hd.c draw_line). */
-static void line(const PsxHdCmd *c, int scale) {
+static void line(Ctx *x, const PsxHdCmd *c, int scale) {
     const PsxGpuState *st = &c->st;
     PsxHdSurf *s = c->s;
     const PsxVtx *a = &c->v[0], *b = &c->v[1];
@@ -523,6 +586,15 @@ static void line(const PsxHdCmd *c, int scale) {
     ay = (float)(a->y - s->y) * S;
     bx = (float)(b->x - (s->x - s->m)) * S;
     by = (float)(b->y - s->y) * S;
+    if (x->alpha < 1.0f && c->blend) {
+        /* PR.34: moved back by the end points' move since the frame before */
+        float k = 1.0f - x->alpha;
+
+        ax += (a->qx - a->px) * k * S;
+        ay += (a->qy - a->py) * k * S;
+        bx += (b->qx - b->px) * k * S;
+        by += (b->qy - b->py) * k * S;
+    }
     if (xmajor) {
         corner(&k[0], ax, ay, 0, 0, ca->r, ca->g, ca->b);
         corner(&k[1], ax, ay + S, 0, 0, ca->r, ca->g, ca->b);
@@ -536,12 +608,12 @@ static void line(const PsxHdCmd *c, int scale) {
     }
     quad(v, &k[0], &k[1], &k[2], &k[3]);
     set_par(v, 6, 0, 0, (st->dither && c->gouraud ? F_DITHER : 0) | (st->set_mask ? F_SETMASK : 0), 0);
-    emit_prim(c, v, 6, 0);
+    emit_prim(x, c, scale, v, 6, 0);
 }
 
 /* Fill (kind 1, colour in VRAM format) or VRAM copy (kind 2) of the surface pixel rect x0, y0,
  * w, h; the copy reads VRAM from u0, v0. */
-static void transfer(const PsxHdCmd *c, int scale) {
+static void transfer(Ctx *x, const PsxHdCmd *c, int scale) {
     PsxHdSurf *s = c->s;
     float x0 = (float)c->x0, y0 = (float)c->y0, x1 = x0 + (float)c->w, y1 = y0 + (float)c->h;
     int r = (c->r & 31) << 3, g = ((c->r >> 5) & 31) << 3, b = ((c->r >> 10) & 31) << 3;
@@ -560,7 +632,7 @@ static void transfer(const PsxHdCmd *c, int scale) {
     corner(&k[3], x1, y1, u1, v1, r, g, b);
     quad(v, &k[0], &k[1], &k[2], &k[3]);
     set_par(v, 6, 0, 0, F_KIND(c->type == PSXHD_FILL ? 1 : 2) | F_BLOCK, 0);
-    emit(s, 0, &sc, v, 6);
+    emit(x, s, 0, &sc, v, 6);
 }
 
 /* ---- batch ---- */
@@ -569,18 +641,23 @@ static void transfer(const PsxHdCmd *c, int scale) {
  * wait lets SDL_GPU recycle finished command buffers and cycled transfer buffers; without it they
  * piled up whenever the SDL renderer did not present (headless runs, a window held by a drag):
  * about 115 MB per second at 2x. */
-static void submit(SDL_GPUCommandBuffer *cmd) {
+static void submit_ctx(Ctx *x, SDL_GPUCommandBuffer *cmd) {
     SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
 
-    if (last_fence != NULL) {
-        SDL_WaitForGPUFences(dev, true, &last_fence, 1);
-        SDL_ReleaseGPUFence(dev, last_fence);
+    if (x->last_fence != NULL) {
+        SDL_WaitForGPUFences(dev, true, &x->last_fence, 1);
+        SDL_ReleaseGPUFence(dev, x->last_fence);
     }
-    last_fence = fence;
+    x->last_fence = fence;
 }
 
-static int upload(SDL_GPUCopyPass *copy) {
-    if (dirty_y0 < dirty_y1) {
+static void submit(SDL_GPUCommandBuffer *cmd) {
+    submit_ctx(&game_ctx, cmd);
+}
+
+/* The dirty VRAM rows (game thread only, with_vram) and x's vertices to the GPU. */
+static int upload(Ctx *x, SDL_GPUCopyPass *copy, int with_vram) {
+    if (with_vram && dirty_y0 < dirty_y1) {
         Uint8 *m = SDL_MapGPUTransferBuffer(dev, vram_tb, true);
         SDL_GPUTransferBufferLocation src;
         SDL_GPUBufferRegion dst;
@@ -598,48 +675,48 @@ static int upload(SDL_GPUCopyPass *copy) {
         SDL_UploadToGPUBuffer(copy, &src, &dst, false);
         dirty_y0 = dirty_y1 = 0;
     }
-    if (nverts > 0) {
-        Uint32 bytes = (Uint32)nverts * sizeof(Vert);
+    if (x->nverts > 0) {
+        Uint32 bytes = (Uint32)x->nverts * sizeof(Vert);
         SDL_GPUTransferBufferLocation src;
         SDL_GPUBufferRegion dst;
         void *m;
 
-        if (bytes > vcap) {
+        if (bytes > x->vcap) {
             SDL_GPUBufferCreateInfo bi;
             SDL_GPUTransferBufferCreateInfo ti;
-            Uint32 cap = vcap ? vcap : 1u << 20;
+            Uint32 cap = x->vcap ? x->vcap : 1u << 20;
 
             while (cap < bytes) {
                 cap *= 2;
             }
-            if (vbuf != NULL) {
-                SDL_ReleaseGPUBuffer(dev, vbuf);
-                SDL_ReleaseGPUTransferBuffer(dev, vtb);
+            if (x->vbuf != NULL) {
+                SDL_ReleaseGPUBuffer(dev, x->vbuf);
+                SDL_ReleaseGPUTransferBuffer(dev, x->vtb);
             }
             SDL_zero(bi);
             bi.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
             bi.size = cap;
-            vbuf = SDL_CreateGPUBuffer(dev, &bi);
+            x->vbuf = SDL_CreateGPUBuffer(dev, &bi);
             SDL_zero(ti);
             ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
             ti.size = cap;
-            vtb = SDL_CreateGPUTransferBuffer(dev, &ti);
-            vcap = cap;
-            if (vbuf == NULL || vtb == NULL) {
+            x->vtb = SDL_CreateGPUTransferBuffer(dev, &ti);
+            x->vcap = cap;
+            if (x->vbuf == NULL || x->vtb == NULL) {
                 printf("[gpu] GPU renderer: vertex buffer failed: %s\n", SDL_GetError());
-                vcap = 0;
+                x->vcap = 0;
                 return 0;
             }
         }
-        m = SDL_MapGPUTransferBuffer(dev, vtb, true);
+        m = SDL_MapGPUTransferBuffer(dev, x->vtb, true);
         if (m == NULL) {
             return 0;
         }
-        memcpy(m, verts, bytes);
-        SDL_UnmapGPUTransferBuffer(dev, vtb);
-        src.transfer_buffer = vtb;
+        memcpy(m, x->verts, bytes);
+        SDL_UnmapGPUTransferBuffer(dev, x->vtb);
+        src.transfer_buffer = x->vtb;
         src.offset = 0;
-        dst.buffer = vbuf;
+        dst.buffer = x->vbuf;
         dst.offset = 0;
         dst.size = bytes;
         SDL_UploadToGPUBuffer(copy, &src, &dst, true);
@@ -647,19 +724,13 @@ static int upload(SDL_GPUCopyPass *copy) {
     return 1;
 }
 
-void PsxHw_Flush(const PsxHdCmd *q, int n, int scale) {
+/* The commands as triangles into x (vertices and draws). */
+static void build(Ctx *x, const PsxHdCmd *q, int n, int scale) {
     static int warned;
-    SDL_GPUCommandBuffer *cmd;
-    SDL_GPUCopyPass *copy;
-    SDL_GPURenderPass *pass = NULL;
-    PsxHdSurf *cur = NULL;
-    int curpipe = -1, i;
+    int i;
 
-    if (dev == NULL) {
-        return;
-    }
-    nverts = 0;
-    ndraws = 0;
+    x->nverts = 0;
+    x->ndraws = 0;
     for (i = 0; i < n; i++) {
         const PsxHdCmd *c = &q[i];
 
@@ -669,57 +740,56 @@ void PsxHw_Flush(const PsxHdCmd *q, int n, int scale) {
         }
         switch (c->type) {
         case PSXHD_TRI:
-            tri(c, scale);
+            tri(x, c, scale);
             break;
         case PSXHD_RECT:
-            rect(c, scale);
+            rect(x, c, scale);
             break;
         case PSXHD_LINE:
-            line(c, scale);
+            line(x, c, scale);
             break;
         default:
-            transfer(c, scale);
+            transfer(x, c, scale);
             break;
         }
     }
-    cmd = SDL_AcquireGPUCommandBuffer(dev);
-    if (cmd == NULL) {
-        printf("[gpu] GPU renderer: no command buffer: %s\n", SDL_GetError());
-        return;
-    }
-    copy = SDL_BeginGPUCopyPass(cmd);
-    if (!upload(copy)) {
-        ndraws = 0;
-    }
-    SDL_EndGPUCopyPass(copy);
-    for (i = 0; i < ndraws; i++) {
-        const Draw *d = &draws[i];
+}
 
-        if (d->s != cur) {
+/* x's draws into their surfaces' textures (target NULL) or all into target (tw x th, the
+ * window thread's smooth picture), textures from vram. */
+static void draw_built(Ctx *x, SDL_GPUCommandBuffer *cmd, int scale, SDL_GPUBuffer *vram, void *target, int tw, int th) {
+    SDL_GPURenderPass *pass = NULL;
+    PsxHdSurf *cur = NULL;
+    int curpipe = -1, i;
+
+    for (i = 0; i < x->ndraws; i++) {
+        const Draw *d = &x->draws[i];
+
+        if (pass == NULL || (target == NULL && d->s != cur)) {
             SDL_GPUColorTargetInfo ct;
             SDL_GPUBufferBinding vb;
             SDL_FColor half = { 0.5f, 0.5f, 0.5f, 0.5f };
             float size[2];
-            int sc = scale;
+            int par[4] = { scale, x->ox, x->oy, 0 };
 
             if (pass != NULL) {
                 SDL_EndGPURenderPass(pass);
             }
             cur = d->s;
             SDL_zero(ct);
-            ct.texture = cur->tex;
+            ct.texture = target != NULL ? target : cur->tex;
             ct.load_op = SDL_GPU_LOADOP_LOAD;
             ct.store_op = SDL_GPU_STOREOP_STORE;
             pass = SDL_BeginGPURenderPass(cmd, &ct, 1, NULL);
-            vb.buffer = vbuf;
+            vb.buffer = x->vbuf;
             vb.offset = 0;
             SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
-            SDL_BindGPUFragmentStorageBuffers(pass, 0, &vram_buf, 1);
+            SDL_BindGPUFragmentStorageBuffers(pass, 0, &vram, 1);
             SDL_SetGPUBlendConstants(pass, half);
-            size[0] = (float)((cur->w + 2 * cur->m) * scale);
-            size[1] = (float)(cur->h * scale);
+            size[0] = target != NULL ? (float)tw : (float)((cur->w + 2 * cur->m) * scale);
+            size[1] = target != NULL ? (float)th : (float)(cur->h * scale);
             SDL_PushGPUVertexUniformData(cmd, 0, size, sizeof(size));
-            SDL_PushGPUFragmentUniformData(cmd, 0, &sc, sizeof(sc));
+            SDL_PushGPUFragmentUniformData(cmd, 0, par, sizeof(par));
             curpipe = -1;
         }
         if (d->pipe != curpipe) {
@@ -732,13 +802,117 @@ void PsxHw_Flush(const PsxHdCmd *q, int n, int scale) {
     if (pass != NULL) {
         SDL_EndGPURenderPass(pass);
     }
+}
+
+void PsxHw_Flush(const PsxHdCmd *q, int n, int scale) {
+    Ctx *x = &game_ctx;
+    SDL_GPUCommandBuffer *cmd;
+    SDL_GPUCopyPass *copy;
+
+    if (dev == NULL) {
+        return;
+    }
+    build(x, q, n, scale);
+    cmd = SDL_AcquireGPUCommandBuffer(dev);
+    if (cmd == NULL) {
+        printf("[gpu] GPU renderer: no command buffer: %s\n", SDL_GetError());
+        return;
+    }
+    copy = SDL_BeginGPUCopyPass(cmd);
+    if (!upload(x, copy, 1)) {
+        x->ndraws = 0;
+    }
+    SDL_EndGPUCopyPass(copy);
+    draw_built(x, cmd, scale, vram_buf, NULL, 0, 0);
     submit(cmd);
+}
+
+void *PsxHw_VramCopy(void *buf) {
+    SDL_GPUCommandBuffer *cmd;
+    SDL_GPUCopyPass *copy;
+    SDL_GPUBufferLocation from, to;
+
+    if (dev == NULL) {
+        return NULL;
+    }
+    if (buf == NULL) {
+        SDL_GPUBufferCreateInfo bi;
+
+        SDL_zero(bi);
+        bi.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
+        bi.size = VRAM_BYTES;
+        buf = SDL_CreateGPUBuffer(dev, &bi);
+        if (buf == NULL) {
+            return NULL;
+        }
+    }
+    cmd = SDL_AcquireGPUCommandBuffer(dev);
+    if (cmd == NULL) {
+        return buf;
+    }
+    copy = SDL_BeginGPUCopyPass(cmd);
+    from.buffer = vram_buf;
+    from.offset = 0;
+    to.buffer = buf;
+    to.offset = 0;
+    SDL_CopyGPUBufferToBuffer(copy, &from, &to, VRAM_BYTES, false);
+    SDL_EndGPUCopyPass(copy);
+    submit(cmd);
+    return buf;
+}
+
+void PsxHw_ReleaseBuffer(void *buf) {
+    if (dev != NULL && buf != NULL) {
+        SDL_ReleaseGPUBuffer(dev, buf);
+    }
+}
+
+/* SDL_CopyGPUTextureToTexture of the rect x, y, w, h of src to dx, dy of dst in cmd */
+static void copy_tex(SDL_GPUCommandBuffer *cmd, void *src, int x, int y, int w, int h, void *dst, int dx, int dy) {
+    SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureLocation from, to;
+
+    SDL_zero(from);
+    from.texture = src;
+    from.x = (Uint32)x;
+    from.y = (Uint32)y;
+    SDL_zero(to);
+    to.texture = dst;
+    to.x = (Uint32)dx;
+    to.y = (Uint32)dy;
+    SDL_CopyGPUTextureToTexture(copy, &from, &to, (Uint32)w, (Uint32)h, 1, false);
+    SDL_EndGPUCopyPass(copy);
+}
+
+void PsxHw_Replay(const PsxHdCmd *q, int n, int scale, int ox, int oy, float alpha, void *vram, void *base, void *dst,
+                  int w, int h) {
+    Ctx *x = &win_ctx;
+    SDL_GPUCommandBuffer *cmd;
+    SDL_GPUCopyPass *copy;
+
+    if (dev == NULL || vram == NULL || base == NULL || dst == NULL) {
+        return;
+    }
+    x->ox = ox;
+    x->oy = oy;
+    x->alpha = alpha;
+    build(x, q, n, scale);
+    cmd = SDL_AcquireGPUCommandBuffer(dev);
+    if (cmd == NULL) {
+        return;
+    }
+    copy_tex(cmd, base, 0, 0, w, h, dst, 0, 0);
+    copy = SDL_BeginGPUCopyPass(cmd);
+    if (!upload(x, copy, 0)) {
+        x->ndraws = 0;
+    }
+    SDL_EndGPUCopyPass(copy);
+    draw_built(x, cmd, scale, vram, dst, w, h);
+    submit_ctx(x, cmd);
 }
 
 void PsxHw_Copy(void *src, int x, int y, int w, int h, void *dst) {
     SDL_GPUCommandBuffer *cmd;
-    SDL_GPUCopyPass *copy;
-    SDL_GPUTextureLocation from, to;
 
     if (dev == NULL || src == NULL || dst == NULL) {
         return;
@@ -747,20 +921,12 @@ void PsxHw_Copy(void *src, int x, int y, int w, int h, void *dst) {
     if (cmd == NULL) {
         return;
     }
-    copy = SDL_BeginGPUCopyPass(cmd);
-    SDL_zero(from);
-    from.texture = src;
-    from.x = (Uint32)x;
-    from.y = (Uint32)y;
-    SDL_zero(to);
-    to.texture = dst;
-    SDL_CopyGPUTextureToTexture(copy, &from, &to, (Uint32)w, (Uint32)h, 1, false);
-    SDL_EndGPUCopyPass(copy);
+    copy_tex(cmd, src, x, y, w, h, dst, 0, 0);
     submit(cmd);
 }
 
 /* PR.2b: the rect x, y, w, h of src sharpened (strength 1..100) into the top-left corner of dst. */
-void PsxHw_Sharpen(void *src, int x, int y, int w, int h, void *dst, int strength) {
+static void sharpen_ctx(Ctx *cx, void *src, int x, int y, int w, int h, void *dst, int strength) {
     SDL_GPUCommandBuffer *cmd;
     SDL_GPURenderPass *pass;
     SDL_GPUColorTargetInfo ct;
@@ -799,7 +965,15 @@ void PsxHw_Sharpen(void *src, int x, int y, int w, int h, void *dst, int strengt
     SDL_PushGPUFragmentUniformData(cmd, 0, &par, sizeof(par));
     SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
     SDL_EndGPURenderPass(pass);
-    submit(cmd);
+    submit_ctx(cx, cmd);
+}
+
+void PsxHw_Sharpen(void *src, int x, int y, int w, int h, void *dst, int strength) {
+    sharpen_ctx(&game_ctx, src, x, y, w, h, dst, strength);
+}
+
+void PsxHw_SharpenWin(void *src, int x, int y, int w, int h, void *dst, int strength) {
+    sharpen_ctx(&win_ctx, src, x, y, w, h, dst, strength);
 }
 
 int PsxHw_Read(void *tex, int x, int y, int w, int h, uint32_t *out) {

@@ -47,10 +47,18 @@ void Gte_Command(uint32_t op);
 
 /* PG.2 (no-wobble HD output): called after every RTPS with the integer SXY2 word and a float
  * projection of the same point from the unshifted MAC1..3 (x = view x * H / z + OFX, y the same,
- * before the 11-bit cut; z = view depth). Skipped when H >= 2 * z (the UNR divide saturates).
- * clamped: IR1 / IR2 or SX2 / SY2 saturated for this point, so the integer result is not the
- * float rounded (a vertex far off screen, e.g. a battle wall near the camera).
+ * before the 11-bit cut; z = view depth), v0 = the input vertex V0. flags: GTE_PRECISE_CLAMPED:
+ * IR1 / IR2 or SX2 / SY2 saturated for this point, so the integer result is not the float rounded
+ * (a vertex far off screen, e.g. a battle wall near the camera); GTE_PRECISE_NEAR: H >= 2 * z (the
+ * UNR divide saturates), x / y are not the point (PR.34 smooth frames still count it).
  * NULL by default (gte_test): the hardware view is never changed by it. */
-extern void (*Gte_PreciseHook)(int32_t sxy, double x, double y, double z, int clamped);
+#define GTE_PRECISE_CLAMPED 1
+#define GTE_PRECISE_NEAR 2
+extern void (*Gte_PreciseHook)(int32_t sxy, double x, double y, double z, int flags, const int16_t *v0);
+/* PR.34 smooth frames: bumped by every write to RT, TR, OFX, OFY or H (the hook can tell when the
+ * projection changed), and called with the source address whenever RT (kind 0) or TR (kind 1)
+ * is loaded from a matrix in memory (SetRotMatrix / SetTransMatrix). NULL by default. */
+extern uint32_t Gte_MatSerial;
+extern void (*Gte_MatrixHook)(int kind, const void *src);
 
 #endif /* PSYQ_GTE_CORE_H */

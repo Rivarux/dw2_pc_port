@@ -35,10 +35,15 @@ typedef struct {
     int textured, gouraud, semi, abr, precise;
     int wide; /* may draw into the 16:9 margins */
     int x0, y0, w, h, u0, v0, r, g, b; /* rectangles */
+    int layer;    /* PR.34: the 2D layer of its packet (PsxHd_SmoothLayer), 0 none */
+    int blend;    /* PR.34: every vertex has its frame-before position (v[].qx ...) */
+    float dx, dy; /* PR.34: its layer's frame-before offset minus this frame's (VRAM pixels) */
 } PsxHdCmd;
 
-/* Clip rect of the draw area of c in surface pixels, inclusive, inside the surface. */
+/* Clip rect of the draw area of c in surface pixels, inclusive, inside the surface (at the
+ * current scale, or at scale). */
 void PsxHd_CmdClip(const PsxHdCmd *c, int *x0, int *y0, int *x1, int *y1);
+void PsxHd_CmdClipAt(const PsxHdCmd *c, int scale, int *x0, int *y0, int *x1, int *y1);
 
 /* backend/psxgpu_hw.c: the queue drawn on the GPU. PsxHw_Flush draws n commands in order
  * (uploading the VRAM rows marked dirty first); surfaces get their texture from PsxHw_Create.
@@ -47,5 +52,15 @@ int PsxHw_Active(void);
 void PsxHw_MarkDirty(int y, int h);
 void PsxHw_Flush(const PsxHdCmd *q, int n, int scale);
 int PsxHw_Read(void *tex, int x, int y, int w, int h, uint32_t *out);
+/* PR.34 smooth frames. PsxHw_VramCopy: a GPU copy of the VRAM buffer as the next batch would see
+ * it (after the last flush) into buf (NULL: a new buffer), returns buf; game thread.
+ * PsxHw_Replay (window thread): base (w x h) copied into dst, then the n logged commands drawn
+ * into dst with the VRAM copy vram, dst's top-left = surface pixel (ox, oy), positions blended by
+ * alpha (PsxHdCmd.blend / dx / dy). PsxHw_SharpenWin: PsxHw_Sharpen on the window thread. */
+void *PsxHw_VramCopy(void *buf);
+void PsxHw_ReleaseBuffer(void *buf);
+void PsxHw_Replay(const PsxHdCmd *q, int n, int scale, int ox, int oy, float alpha, void *vram, void *base, void *dst,
+                  int w, int h);
+void PsxHw_SharpenWin(void *src, int x, int y, int w, int h, void *dst, int strength);
 
 #endif /* BACKEND_PSXGPU_HD_INT_H */

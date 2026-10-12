@@ -51,13 +51,20 @@
  *
  * PR.2b sharpening (F8, F1, settings sharpen): the game thread sharpens the HD picture when it
  * publishes it (GPU: PsxHw_Sharpen instead of the copy; soft: PsxHd_ReadDisplay). PR.10: the game
- * thread notes at each VBlank wait whether the title runs, for the host's F1 hint (host/ui.cpp). */
+ * thread notes at each VBlank wait whether the title runs, for the host's F1 hint (host/ui.cpp).
+ *
+ * PR.34 smooth frames (on by default; F9, F1, settings smooth, --smooth; GPU renderer): the game thread hands each
+ * frame that can be drawn again over as a package (backend/psxgpu_hd.c); the window thread
+ * presents with vsync at the monitor's refresh rate and draws the newest package for the time of
+ * each picture, blended between the frame before and it (PsxHd_SmoothPicture). The game thread
+ * never draws those pictures, so they cannot hold up its VBlank clock. Frames without a package
+ * are shown from the slots as before. */
 
 #define WINDOW_SCALE 3
 #define SLOTS 3
 
 enum { REQ_SCALE = 1, REQ_WIDE = 2, REQ_PGXP = 4, REQ_SHOT = 8, REQ_QUIT = 16, REQ_SETTING = 32, REQ_SHARPEN = 64,
-       REQ_SPEED = 128 };
+       REQ_SPEED = 128, REQ_SMOOTH = 256 };
 
 typedef struct {
     int kind;      /* 0 black, 1 1x picture, 2 software HD picture, 3 GPU texture */
@@ -96,11 +103,17 @@ static SDL_Texture *wraps[SLOTS]; /* main thread: the slot textures as renderer 
 static unsigned wrap_gen[SLOTS];
 static unsigned shown_seq[SLOTS];
 static SDL_AtomicInt requests;
-static SDL_AtomicInt wanted[SET_COUNT]; /* REQ_SETTING: F1's values (+1) for scale, wide, pgxp, sharpen */
+static SDL_AtomicInt wanted[SET_COUNT]; /* REQ_SETTING: F1's values (+1) for scale, wide, pgxp, sharpen, smooth */
 static SDL_AtomicInt game_done;
 static SDL_AtomicInt on_title; /* PR.10: the game thread saw the title scene at its last VBlank wait */
 static int last_sharpen = 50;  /* F8 turns sharpening back on at this strength */
 static const char *volatile quit_why = "window closed";
+static SDL_AtomicInt smooth_on;  /* PR.34: smooth frames active (game side sets it) */
+static int shown_vsync;          /* main thread: the renderer's vsync */
+static int vsync_ok = 1;         /* main thread: vsync could be turned on */
+static SDL_Texture *smooth_wrap; /* main thread: the smooth picture as a renderer texture */
+static void *smooth_wrap_tex;
+static int smooth_wrap_w, smooth_wrap_h;
 
 /* PR.3, main thread */
 static int win_mode;         /* the mode applied to the window */
@@ -465,7 +478,34 @@ static void update_cursor(void) {
 
 void Host_SetPgxp(int on) {
     PsxHd_SetPgxp(on);
-    Gte_PreciseHook = on ? Pgxp_Record : NULL;
+    Gte_PreciseHook = on || PsxHd_Smooth() ? Pgxp_Record : NULL;
+}
+
+/* PR.34, game side (or before the game runs): smooth frames need the PGXP vertices and their
+ * sources (no wobble while on) and the GPU renderer. */
+void Host_SetSmooth(int on) {
+    on = on != 0;
+    PsxHd_SetSmooth(on);
+    Pgxp_SetSources(on);
+    Gte_MatrixHook = on ? Pgxp_Matrix : NULL;
+    Gte_PreciseHook = on || PsxHd_Pgxp() ? Pgxp_Record : NULL;
+    SDL_SetAtomicInt(&smooth_on, PsxHd_SmoothActive());
+}
+
+void Host_SmoothLayer(int id, const void *start, const void *end, int x, int y) {
+    PsxHd_SmoothLayer(id, (uintptr_t)start, (uintptr_t)end, x, y);
+}
+
+void Host_SmoothLattice(int px, int py, int pz) {
+    Pgxp_Lattice(px, py, pz);
+}
+
+void Host_SmoothScene(void) {
+    PsxHd_SmoothScene();
+}
+
+void Host_SmoothCamera(const int *v, int n, int hard) {
+    Pgxp_Camera(v, n, hard);
 }
 
 /* PR.2b, game side (or before the game runs). */
@@ -735,9 +775,40 @@ static void shot_notice(void) {
     }
 }
 
+/* PR.34: the smooth picture texture as a renderer texture (main thread) */
+static SDL_Texture *wrap_smooth(void *tex, int w, int h) {
+    SDL_PropertiesID props;
+
+    if (smooth_wrap != NULL && smooth_wrap_tex == tex && smooth_wrap_w == w && smooth_wrap_h == h) {
+        return smooth_wrap;
+    }
+    if (smooth_wrap != NULL) {
+        SDL_DestroyTexture(smooth_wrap); /* does not release the GPU texture */
+    }
+    props = SDL_CreateProperties();
+    SDL_SetPointerProperty(props, SDL_PROP_TEXTURE_CREATE_GPU_TEXTURE_POINTER, tex);
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_ABGR8888);
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_TARGET);
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, w);
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, h);
+    smooth_wrap = SDL_CreateTextureWithProperties(renderer, props);
+    SDL_DestroyProperties(props);
+    if (smooth_wrap == NULL) {
+        fail("GPU smooth picture texture");
+    }
+    SDL_SetTextureBlendMode(smooth_wrap, SDL_BLENDMODE_NONE);
+    SDL_SetTextureScaleMode(smooth_wrap, SDL_SCALEMODE_LINEAR);
+    smooth_wrap_tex = tex;
+    smooth_wrap_w = w;
+    smooth_wrap_h = h;
+    return smooth_wrap;
+}
+
 void Host_Present(void) {
     const Frame *f = NULL;
     int slot;
+    void *stex = NULL;
+    Frame sf;
 
     if (no_present()) {
         return;
@@ -757,7 +828,12 @@ void Host_Present(void) {
         shown_logical_w = f->logical_w;
         SDL_SetRenderLogicalPresentation(renderer, shown_logical_w, 240, SDL_LOGICAL_PRESENTATION_LETTERBOX);
     }
-    if (f != NULL && f->kind == 3) {
+    if (f != NULL && SDL_GetAtomicInt(&smooth_on) &&
+        PsxHd_SmoothPicture(SDL_GetTicksNS(), &stex, &sf.w, &sf.h, &sf.margin)) {
+        /* PR.34: the newest package drawn for now */
+        sf.logical_w = f->logical_w;
+        draw_hd(wrap_smooth(stex, sf.w, sf.h), &sf);
+    } else if (f != NULL && f->kind == 3) {
         wrap_slot(slot, f);
         draw_hd(wraps[slot], f);
     } else if (f != NULL && f->kind == 2) {
@@ -854,6 +930,9 @@ void Host_PumpEvents(void) {
                 if (e.key.scancode == SDL_SCANCODE_F8) {
                     request(REQ_SHARPEN);
                 }
+                if (e.key.scancode == SDL_SCANCODE_F9) {
+                    request(REQ_SMOOTH);
+                }
                 if (e.key.scancode == SDL_SCANCODE_F3) {
                     request(REQ_SPEED);
                 }
@@ -930,6 +1009,12 @@ void Host_GameEvents(void) {
             printf("[gpu] sharpen %d (F1)\n", PsxHd_Sharpen());
             Settings_Set(SET_SHARPEN, PsxHd_Sharpen());
         }
+        if ((v = SDL_SetAtomicInt(&wanted[SET_SMOOTH], 0)) != 0 && v - 1 != PsxHd_Smooth()) {
+            Host_SetSmooth(v - 1);
+            printf("[gpu] smooth frames %s (F1)%s\n", PsxHd_Smooth() ? "on" : "off",
+                   PsxHd_Smooth() && !PsxHd_Gpu() ? ": needs the GPU renderer" : "");
+            Settings_Set(SET_SMOOTH, PsxHd_Smooth());
+        }
         fflush(stdout);
     }
     if (r & REQ_SHARPEN) {
@@ -941,6 +1026,18 @@ void Host_GameEvents(void) {
             notice("Sharpening %d (F8)%s", PsxHd_Sharpen(), PsxHd_Scale() > 1 ? "" : ", needs scale 2x or more");
         }
         Settings_Set(SET_SHARPEN, PsxHd_Sharpen());
+        fflush(stdout);
+    }
+    if (r & REQ_SMOOTH) {
+        Host_SetSmooth(!PsxHd_Smooth());
+        printf("[gpu] smooth frames %s (F9)%s\n", PsxHd_Smooth() ? "on" : "off",
+               PsxHd_Smooth() && !PsxHd_Gpu() ? ": needs the GPU renderer" : "");
+        if (PsxHd_Smooth() && !PsxHd_Gpu()) {
+            notice("Smooth frames on (F9): needs the GPU renderer");
+        } else {
+            notice("Smooth frames %s (F9)", PsxHd_Smooth() ? "on" : "off");
+        }
+        Settings_Set(SET_SMOOTH, PsxHd_Smooth());
         fflush(stdout);
     }
     if (r & REQ_SPEED) {
@@ -982,6 +1079,7 @@ void Host_GameEvents(void) {
         Host_Quit(quit_why);
     }
     SDL_SetAtomicInt(&on_title, Host_OnTitle());
+    SDL_SetAtomicInt(&smooth_on, PsxHd_SmoothActive()); /* PR.34: also after the GPU came up */
     Host_InputLatch();
 #if DW2_DEV
     DevSnap_Capture();
@@ -991,11 +1089,51 @@ void Host_GameEvents(void) {
     }
 }
 
+/* PR.34, main thread: vsync on while smooth frames are on (one picture per refresh). */
+static int smooth_vsync(void) {
+    int sm = SDL_GetAtomicInt(&smooth_on) && !(SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN));
+
+    if (sm != shown_vsync) {
+        shown_vsync = sm;
+        vsync_ok = SDL_SetRenderVSync(renderer, sm ? 1 : 0);
+        printf("[host] vsync %s%s\n", sm ? "on (smooth frames)" : "off", vsync_ok ? "" : ": not available");
+        fflush(stdout);
+    }
+    return sm;
+}
+
 /* Main thread while the game thread runs: events and present until the game has quit. */
 void Host_WindowLoop(void) {
+    Uint64 rate_t0 = 0, worst = 0;
+    unsigned pics = 0;
+
     while (!SDL_GetAtomicInt(&game_done)) {
         Host_PumpEvents();
-        if (SDL_WaitSemaphoreTimeout(frame_sem, 4)) {
+        if (smooth_vsync()) {
+            /* PR.34: a picture per refresh (the present waits for the vsync) */
+            Uint64 t = SDL_GetTicksNS();
+
+            Host_Present();
+            if (!vsync_ok) {
+                SDL_DelayPrecise(4000000);
+            }
+            /* the picture rate, about every 10 s */
+            if (rate_t0 == 0 || t - rate_t0 > 30000000000ull) {
+                rate_t0 = t;
+                pics = 0;
+                worst = 0;
+            } else if (++pics % 64 == 0 && SDL_GetTicksNS() - rate_t0 >= 10000000000ull) {
+                printf("[host] smooth frames: %u pictures in %.2f s (%.1f Hz), longest picture %.1f ms\n", pics,
+                       (double)(SDL_GetTicksNS() - rate_t0) / 1e9,
+                       pics * 1e9 / (double)(SDL_GetTicksNS() - rate_t0), (double)worst / 1e6);
+                fflush(stdout);
+                rate_t0 = SDL_GetTicksNS();
+                pics = 0;
+                worst = 0;
+            }
+            t = SDL_GetTicksNS() - t;
+            worst = t > worst ? t : worst;
+        } else if (SDL_WaitSemaphoreTimeout(frame_sem, 4)) {
             Host_Present();
         }
         else if (Ui_Drawing()) {

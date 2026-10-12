@@ -4,7 +4,9 @@
 #include <string.h>
 
 #include "backend/psxgpu.h"
+#include "backend/psxgpu_hd.h"
 #include "host/host.h"
+#include "host/host_sdl.h"
 #include "host/ui.h"
 
 /* Screenshots for checks (P1.4): the display area as shown and the whole VRAM (1024x512, 15-bit
@@ -606,6 +608,24 @@ void Host_SaveShot(const char *dir, const char *tag) {
             }
         }
         free(hd);
+    }
+    /* PR.34 smooth frames (one thread only): the newest package drawn at the frame before (0),
+     * a third (33, off the 1x pixel grid), halfway (50) and as drawn (100) */
+    if (!Host_Threaded() && PsxHd_SmoothActive() && PsxHd_SmoothRead(1.0f, NULL, &w, &h)) {
+        static const int pct[4] = { 0, 33, 50, 100 };
+        uint32_t *sm = malloc((size_t)w * h * sizeof(uint32_t));
+
+        for (x = 0; x < 4 && sm != NULL; x++) {
+            if (PsxHd_SmoothRead((float)pct[x] / 100.0f, sm, &w, &h)) {
+                snprintf(path, sizeof(path), "%s/%s_smooth%d.png", dir, tag, pct[x]);
+                if (write_png(path, sm, w, h, 0)) {
+                    printf("[shot] %s (%dx%d)\n", path, w, h);
+                } else {
+                    printf("[shot] cannot write %s\n", path);
+                }
+            }
+        }
+        free(sm);
     }
     Ui_Shot(dir, tag); /* --settings-ui / --devui headless: the window picture with the UI */
     fflush(stdout);

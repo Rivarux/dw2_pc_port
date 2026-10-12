@@ -20,12 +20,16 @@ typedef struct {
 } PsxGpuState;
 
 /* One polygon vertex in VRAM coordinates (drawing offset applied), colour 8 bits per channel;
- * px, py, pz: the precise position and depth (PG.2) when the polygon is drawn precise. */
+ * px, py, pz: the precise position and depth (PG.2) when the polygon is drawn precise. PR.34
+ * smooth frames: src = its PGXP source (-1 none), qx, qy, qz = the precise position of the same
+ * vertex in the frame before (filled when the frame ends, PsxHdCmd.blend). */
 typedef struct {
     int x, y;
     int r, g, b;
     int u, v;
     float px, py, pz;
+    int src;
+    float qx, qy, qz;
 } PsxVtx;
 
 /* Texture of a primitive: mode 0 4-bit, 1 8-bit, 2 15-bit; page tx / ty, CLUT cx / cy. */
@@ -119,5 +123,38 @@ int PsxHd_DisplayTexture(int x, int y, int w, int h, void **tex, int *tw, int *t
 int PsxHd_LastMargin(void);
 /* Changes on every surface write or display change (the host skips unchanged frames). */
 unsigned PsxHd_Serial(void);
+
+/* PR.34 smooth frames (GPU renderer with PGXP; the city first). With smooth on, each frame
+ * (DrawOTag) is logged; PsxHd_EndFrame (libgpu, after Pgxp_EndFrame) turns a frame that can be
+ * drawn again into a package: its commands with the frame-before position of every 3D vertex
+ * (Pgxp_PrevPos) and the scroll of its 2D layers, a copy of the VRAM, its picture as the base and
+ * the time of its VBlank. Only frames with a 2D layer (PsxHd_SmoothLayer: the city map) or a scene
+ * hint (PsxHd_SmoothScene: the dungeon) are packaged; the others are shown as they are. Fills
+ * queued just before DrawOTag (PutDrawEnv's background clear) start the frame's log. Game thread: PsxHd_SetSmooth,
+ * PsxHd_SmoothLayer, PsxHd_SetFrameTime (the deadline of the VBlank being run), PsxHd_EndFrame.
+ * PsxHd_Packet: the address of the packet libgpu's DrawOTag sends (0 outside it).
+ * Window thread: PsxHd_SmoothPicture draws the newest package at time t (ns, SDL_GetTicksNS):
+ * blended from the frame before (alpha 0) to it (alpha 1) by t between its VBlank and the next
+ * one, sharpened like a published picture; tex (an SDL_GPUTexture w x h, margin as
+ * PsxHd_LastMargin) stays valid until the next call. 0: no package, show the published picture.
+ * PsxHd_SmoothAlpha: the alpha of the last PsxHd_SmoothPicture (1 when it returned 0).
+ * PsxHd_SmoothRead (headless checks, game thread): the newest package at alpha, read back as
+ * 0x00RRGGBB (out NULL: size only). */
+extern uintptr_t PsxHd_Packet;
+void PsxHd_SetSmooth(int on);
+int PsxHd_Smooth(void);
+int PsxHd_SmoothActive(void);
+void PsxHd_SmoothLayer(int id, uintptr_t start, uintptr_t end, int x, int y);
+/* PR.34: this frame is packaged without a 2D layer (the dungeon). */
+void PsxHd_SmoothScene(void);
+void PsxHd_SetFrameTime(uint64_t ns);
+void PsxHd_EndFrame(void);
+int PsxHd_SmoothPicture(uint64_t t, void **tex, int *w, int *h, int *margin);
+float PsxHd_SmoothAlpha(void);
+/* The package made by the last PsxHd_EndFrame (game thread) and the one the last
+ * PsxHd_SmoothPicture drew (window thread): numbers, 0 none (for host overlays that follow the picture). */
+unsigned PsxHd_PackageSeq(void);
+unsigned PsxHd_SmoothSeq(void);
+int PsxHd_SmoothRead(float alpha, uint32_t *out, int *w, int *h);
 
 #endif /* BACKEND_PSXGPU_HD_H */

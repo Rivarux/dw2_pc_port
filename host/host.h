@@ -69,6 +69,22 @@ void Host_SetPgxp(int on);
 void Host_SetSharpen(int strength);
 /* host/sdl.c: PG.3 16:9 on / off (wide HD surfaces, 16:9 window picture). */
 void Host_SetWide(int on);
+/* host/sdl.c: PR.34 smooth frames on / off (--smooth, F9, settings smooth; GPU renderer, uses the
+ * PGXP vertices). Host_SmoothLayer, for the game C (draw pass, writes no game state): the packets
+ * from start to end (addresses) are a 2D layer at offset x, y (VRAM pixels) this frame, moved
+ * between frames by the offset's change (backend/psxgpu_hd.h PsxHd_SmoothLayer); nothing when off. */
+void Host_SetSmooth(int on);
+void Host_SmoothLayer(int id, const void *start, const void *end, int x, int y);
+/* PR.34, for the game C (writes no game state; nothing when smooth frames are off):
+ * Host_SmoothLattice after a matrix load: its projections are a lattice moved by its input
+ * vertices with periods px, py, pz (backend/pgxp.h Pgxp_Lattice). Host_SmoothScene (draw pass):
+ * this frame can be drawn again between frames without a 2D layer (the dungeon). */
+void Host_SmoothLattice(int px, int py, int pz);
+void Host_SmoothScene(void);
+/* PR.34, for the game C (draw pass, writes no game state): the camera of this frame as n view
+ * values (n <= 16) and whether it is a shot set at once (hard: a change is a cut) or a camera that
+ * moves smoothly (backend/pgxp.h Pgxp_Camera). */
+void Host_SmoothCamera(const int *v, int n, int hard);
 /* PG.3, for the game C (DW2_NATIVE): extra screen pixels on each side of a picture `width` wide
  * in 16:9 (0 in 4:3), so culls can let objects into the sides; and a mark that the frame being
  * built is a 2D picture that keeps black sides (pillarbox). */

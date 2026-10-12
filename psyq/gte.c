@@ -31,7 +31,9 @@ static int32_t c_[32]; /* control registers, as stored */
 
 static uint32_t flag_;
 
-void (*Gte_PreciseHook)(int32_t sxy, double x, double y, double z, int clamped);
+void (*Gte_PreciseHook)(int32_t sxy, double x, double y, double z, int flags, const int16_t *v0);
+uint32_t Gte_MatSerial;
+void (*Gte_MatrixHook)(int kind, const void *src);
 
 static int16_t lo16(int32_t v) { return (int16_t)(uint16_t)v; }
 static int16_t hi16(int32_t v) { return (int16_t)(uint16_t)((uint32_t)v >> 16); }
@@ -195,12 +197,18 @@ static void op_rtps(int sf, int lm) {
         double z = (double)m[2] / 4096.0;
         double h = (uint16_t)c_[GTE_H];
         double div = sf ? 4096.0 : 1.0;
+        uint32_t sat = (flag_ & ~f0) & (F_IR(1) | F_IR(2) | F_SX2 | F_SY2);
+        int16_t v0[3];
 
+        v0[0] = vx(0);
+        v0[1] = vy(0);
+        v0[2] = vz(0);
         if (2.0 * z > h) {
-            uint32_t sat = (flag_ & ~f0) & (F_IR(1) | F_IR(2) | F_SX2 | F_SY2);
-
             Gte_PreciseHook(d_[GTE_SXY2], (double)m[0] / div * h / z + c_[GTE_OFX] / 65536.0,
-                            (double)m[1] / div * h / z + c_[GTE_OFY] / 65536.0, z, sat != 0);
+                            (double)m[1] / div * h / z + c_[GTE_OFY] / 65536.0, z,
+                            sat != 0 ? GTE_PRECISE_CLAMPED : 0, v0);
+        } else {
+            Gte_PreciseHook(d_[GTE_SXY2], 0, 0, z, GTE_PRECISE_NEAR, v0);
         }
     }
     s = (s64)q * (int16_t)c_[GTE_DQA] + c_[GTE_DQB];
@@ -351,6 +359,9 @@ uint32_t Gte_Mfc2(int reg) {
 }
 
 void Gte_Ctc2(int reg, uint32_t value) {
+    if (reg <= GTE_TRZ || reg == GTE_OFX || reg == GTE_OFY || reg == GTE_H) {
+        Gte_MatSerial++;
+    }
     switch (reg) {
     case 4: case 12: case 20: /* RT33, L33, LB3 */
     case GTE_H: case GTE_DQA: case GTE_ZSF3: case GTE_ZSF4:
@@ -434,8 +445,19 @@ static void set_ctrl_words(int reg, const void *src, int n) {
     }
 }
 
-void GteC_SetRotMatrix(const void *r0) { set_ctrl_words(GTE_RT0, r0, 5); }
-void GteC_SetTransMatrix(const void *r0) { set_ctrl_words(GTE_TRX, (const char *)r0 + 20, 3); }
+void GteC_SetRotMatrix(const void *r0) {
+    set_ctrl_words(GTE_RT0, r0, 5);
+    if (Gte_MatrixHook != NULL) {
+        Gte_MatrixHook(0, r0);
+    }
+}
+
+void GteC_SetTransMatrix(const void *r0) {
+    set_ctrl_words(GTE_TRX, (const char *)r0 + 20, 3);
+    if (Gte_MatrixHook != NULL) {
+        Gte_MatrixHook(1, r0);
+    }
+}
 void GteC_SetLightMatrix(const void *r0) { set_ctrl_words(GTE_LLM0, r0, 5); }
 
 void GteC_rtps(void) { Gte_Command(GTE_CMD_RTPS); }

@@ -123,6 +123,9 @@ void Stg20_MapBgDraw(Actor *a) {
     s32 i;
     s16 x;
     s32 sx;
+#ifdef DW2_NATIVE
+    s32 layerStart;
+#endif
 
     e = Stg20_FindWalkerByDigiId(0x1F4);
     if (e != 0) {
@@ -155,6 +158,9 @@ void Stg20_MapBgDraw(Actor *a) {
     }
     ot = (GfxPartOTag *)Sys_State.otLayers.addr[6];
     p = (GfxPartPkt *)Sys_State.packet.addr;
+#ifdef DW2_NATIVE
+    layerStart = Sys_State.packet.addr;
+#endif
     for (sx = gx - 0xA0, i = 0; i < 10; i++) {
         if (w->ids[i] != 0) {
             tex = (GfxPartTexSlot *)Gfx_FindOrLoadTexSlot(w->ids[i]);
@@ -206,6 +212,11 @@ void Stg20_MapBgDraw(Actor *a) {
         }
         Gfx_DrawParts((s32)parts);
     }
+#ifdef DW2_NATIVE
+    /* PR.34 smooth frames: the strips and the overlay parts scroll by gx, gy (host side only) */
+    Host_SmoothLayer(1, (const void *)(uintptr_t)(u32)layerStart, (const void *)(uintptr_t)(u32)Sys_State.packet.addr,
+                     gx, gy);
+#endif
 }
 
 void Stg20_StartBgShake(void) {

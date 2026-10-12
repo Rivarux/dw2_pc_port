@@ -221,12 +221,18 @@ MATRIX *ScaleMatrix(MATRIX *m, VECTOR *v) {
 
 void SetRotMatrix(MATRIX *m) {
     set_rot(m);
+    if (Gte_MatrixHook != NULL) {
+        Gte_MatrixHook(0, m);
+    }
 }
 
 void SetTransMatrix(MATRIX *m) {
     Gte_Ctc2(GTE_TRX, (unsigned int)m->t[0]);
     Gte_Ctc2(GTE_TRY, (unsigned int)m->t[1]);
     Gte_Ctc2(GTE_TRZ, (unsigned int)m->t[2]);
+    if (Gte_MatrixHook != NULL) {
+        Gte_MatrixHook(1, m);
+    }
 }
 
 void SetGeomOffset(int ofx, int ofy) {

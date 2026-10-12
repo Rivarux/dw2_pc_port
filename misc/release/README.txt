@@ -28,7 +28,7 @@ Keys
 Arrow keys = D-pad, Z = Cross, X = Circle, A = Square, S = Triangle, Q / W = L1 / R1,
 E / R = L2 / R2, Enter = Start, Backspace = Select. Gamepads work out of the box.
 
-F1   settings (render scale, 16:9, no wobble, sharpening, window mode, key and gamepad
+F1   settings (render scale, 16:9, no wobble, sharpening, smooth frames, window mode, key and gamepad
      remap, speed-up multiplier, update check, volume)
 F3   speed-up on / off (battles, domains and menus 2x to 8x faster; movies stay at
      normal speed)
@@ -36,6 +36,8 @@ F5   render scale 1x .. 8x
 F6   no wobble on / off
 F7   16:9 on / off
 F8   sharpening on / off
+F9   smooth frames on / off (picture at the monitor's refresh rate, game
+     logic unchanged; GPU renderer, on by default)
 F11  windowed / fullscreen
 F12  screenshot
 Esc  quit (asks first)
@@ -84,6 +86,8 @@ the save (card1.mcd) from just before the problem.
 Version history
 ---------------
 
+v0.1.7  Smooth frames: the city, the domains and the battles are drawn at the monitor's
+        refresh rate, blended between game frames (F9, F1; on by default).
 v0.1.6  No stray "Attack" labels in the top left corner of the battle screen during the
         interrupt prompt (issue #4).
 v0.1.5  Healing items and skills heal in battle again (they counted as attacks on PC).

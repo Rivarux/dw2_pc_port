@@ -88,6 +88,7 @@ that are plain files.
 | **No wobble** | The PS1 snaps every vertex to whole pixels and maps textures without perspective, which makes polygons shake and textures warp. The port keeps precise vertex positions and draws textures with correct perspective. |
 | **Widescreen 16:9** | A wider view of the 3D world, made by widening the camera, not by stretching the picture. Menus, text boxes and the HUD keep their 4:3 layout. |
 | **Sharpening** | Optional contrast adaptive sharpening of the scaled picture (strength 0 to 100, off by default), on the graphics card or on the CPU with the software renderer. Edges get crisper without halos. F8 turns it on and off. |
+| **Smooth frames** | The game runs at its original 30 frames per second, but the picture is drawn at your monitor's refresh rate (60, 144, 240 Hz): the city, the domains and the battles are blended between two game frames, so walking, turning and battle camera moves look fluid. Game logic, timing and random numbers stay exactly the same; the picture is one game frame behind. Camera cuts stay cuts, menus and text stay as they are. On by default with the GPU renderer, F9 turns it off. |
 | **GPU renderer** | Drawing runs on the graphics card through SDL_GPU (Vulkan). A software renderer stays as a fallback. |
 | **Exact frame timing** | The game runs at the PS1's 59.94 Hz, paced to the real clock, on its own thread, so dragging or resizing the window does not stall it. |
 | **Speed-up** | F3 unlocks the speed: battles, walking in the domains and menus run 2x to 8x faster, or with no limit (pick it in F1, Game tab; 3x by default). F3 again locks it to normal speed. Music and battle voices play faster with it; movies always play at normal speed. |
@@ -100,7 +101,7 @@ that are plain files.
 
 | | |
 |---|---|
-| **Settings window** | F1 opens the settings: render scale, 16:9, no wobble, sharpening, renderer, window mode, key and gamepad remap, left stick as D-pad, volume. Changes apply at once and are saved to `settings.ini`. The title screen shows "Press F1 for settings" in the corner (can be switched off). |
+| **Settings window** | F1 opens the settings: render scale, 16:9, no wobble, sharpening, smooth frames, renderer, window mode, key and gamepad remap, left stick as D-pad, volume. Changes apply at once and are saved to `settings.ini`. The title screen shows "Press F1 for settings" in the corner (can be switched off). |
 | **Gamepads** | Any controller SDL3 knows (Xbox, PlayStation, Switch Pro and others), mapped by button position, and it can be plugged in while the game runs. The left stick moves like the D-pad. |
 | **Keyboard** | Full keyboard play out of the box, every key can be changed in F1. |
 | **Two players** | VS mode with two gamepads, or on one keyboard by switching the port with Tab (`--pad2-keys`). |
@@ -160,6 +161,7 @@ Default bindings (change them in the F1 settings window):
 | F6 | No wobble on / off |
 | F7 | 16:9 on / off |
 | F8 | Sharpening on / off |
+| F9 | Smooth frames on / off |
 | F11 | Windowed / fullscreen |
 | F12 | Screenshot |
 | Esc | Quit (asks first) |
@@ -173,6 +175,7 @@ Command line options (`dw2 --help` lists all of them):
 | `--speed-up` | start with the speed-up on |
 | `--pgxp` | start with no wobble on |
 | `--sharpen N` | sharpening strength 0 to 100 (needs scale 2 or more) |
+| `--smooth` | start with smooth frames on (also the default) |
 | `--renderer gpu\|soft` | GPU (default) or software drawing |
 | `--disc PATH` | build the pack from this disc image |
 | `--pak PATH` | use a pack from another place |
@@ -187,8 +190,9 @@ Command line options (`dw2 --help` lists all of them):
 F1 opens the settings window over the running game (mouse, keyboard or gamepad). The game
 does not see your input while it is open.
 
-- **Display:** render scale, 16:9, no wobble, sharpening (the same as F5 / F7 / F6 / F8, which
-  stay in sync with it; sharpening works on scales 2x and up), the title screen hint, renderer
+- **Display:** render scale, 16:9, no wobble, sharpening, smooth frames (the same as F5 / F7 / F6 /
+  F8 / F9, which stay in sync with it; sharpening works on scales 2x and up, smooth frames need
+  the GPU renderer), the title screen hint, renderer
   (GPU or software, used from the next start), window mode (windowed, borderless fullscreen,
   exclusive fullscreen; the same as F11), the display to go fullscreen on, and the resolution
   for exclusive fullscreen.
@@ -214,6 +218,7 @@ download page, or skip it. Saves and settings stay. Turn it off in F1 > Game or 
 
 ## Version history
 
+- **v0.1.7** (2026-10-12): smooth frames: the city, the domains and the battles are drawn at the monitor's refresh rate, blended between game frames (F9, F1; on by default).
 - **v0.1.6** (2026-10-12): no stray "Attack" labels in the top left corner of the battle screen during the interrupt prompt (issue #4).
 - **v0.1.5** (2026-10-10): healing items and skills heal in battle again (they counted as attacks on PC).
 - **v0.1.4** (2026-10-10): the game can update itself.
@@ -242,7 +247,7 @@ In the first release (v0.1.0):
 - [ ] **Full playthrough** from the start to the ending: see [Help wanted](#help-wanted).
 
 Done so far: the whole game code compiles and runs (title, city, domains, battles, menus,
-saves, VS mode), movies, streamed CD audio, render scale, no wobble, 16:9, sharpening, GPU renderer, F1 settings, window modes,
+saves, VS mode), movies, streamed CD audio, render scale, no wobble, 16:9, sharpening, smooth frames, GPU renderer, F1 settings, window modes,
 64-bit and Linux builds, speed-up, update check.
 
 ## Help wanted

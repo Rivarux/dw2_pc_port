@@ -1,7 +1,9 @@
 <p align="center">
   <a href="https://discord.gg/nHXAq2fdCJ"><img src="https://img.shields.io/badge/Join%20Discord!-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join Discord!"></a>
+  &nbsp;
+  <a href="https://github.com/Wyrelade/DW2-Online"><img src="https://img.shields.io/badge/DW2%20Online-Multiplayer%20Project-FFB300?style=for-the-badge&logo=github&logoColor=white&labelColor=F2600C" alt="DW2 Online: the multiplayer project"></a>
   <br>
-  <sub>Community for the PC port and DW2 Online.</sub>
+  <sub>Community for the PC port and DW2 Online.<br>Digimon World 2 goes online: devlog and news on the DW2 Online page.</sub>
 </p>
 
 <p align="center">

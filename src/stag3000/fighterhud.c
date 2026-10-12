@@ -83,7 +83,23 @@ void Stg30_FighterHudUpdate(Stg30TaskHead *a0) {
                 if (w->labelSlide != 0) {
                     w->labelSlide -= 4;
                 } else {
+#ifdef DW2_NATIVE
+                    /* Retail reads past the 3 party label positions for the enemies (param 3..5)
+                     * into the next array: Stg30_FighterHudParts[param - 3] as x / y, y 0x1A1 is
+                     * below the screen. A native build does not keep them adjacent (the label of
+                     * each enemy with a turn showed in the top left corner). */
+                    Halves pos;
+
+                    if (a0->param < 3) {
+                        pos = Stg30_OrderLabelPos[a0->param];
+                    } else {
+                        pos.lo = (u16)Stg30_FighterHudParts[a0->param - 3];
+                        pos.hi = (u16)((u32)Stg30_FighterHudParts[a0->param - 3] >> 16);
+                    }
+                    Text_OpenById(&w->text[1], Stg30_OrderLabelMsgs[v - 1], 0, pos);
+#else
                     Text_OpenById(&w->text[1], Stg30_OrderLabelMsgs[v - 1], 0, Stg30_OrderLabelPos[a0->param]);
+#endif
                 }
             } else if (w->labelSlide != 12) {
                 w->labelSlide += 4;

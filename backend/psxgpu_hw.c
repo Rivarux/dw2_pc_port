@@ -40,6 +40,7 @@ typedef struct {
 } Draw;
 
 #define VRAM_BYTES (PSXGPU_VRAM_W * PSXGPU_VRAM_H * 2)
+#define FENCES 8 /* PR.36: submissions in flight per thread before a submit waits */
 #define ROW_BYTES (PSXGPU_VRAM_W * 2)
 
 enum { F_DITHER = 1, F_BLOCK = 2, F_CLAMP = 0x200, F_SETMASK = 0x100 };
@@ -55,7 +56,8 @@ typedef struct {
     SDL_GPUBuffer *vbuf;
     SDL_GPUTransferBuffer *vtb;
     Uint32 vcap; /* bytes of vbuf / vtb */
-    SDL_GPUFence *last_fence;
+    SDL_GPUFence *fences[FENCES]; /* PR.36: submissions not known done, oldest first */
+    int nfences;
     int ox, oy;  /* PR.34: the target's origin in surface pixels */
     float alpha; /* PR.34: blend of logged positions, 1 = as drawn */
 } Ctx;
@@ -70,6 +72,8 @@ static SDL_GPUGraphicsPipeline *sharpen_pipe; /* PR.2b */
 static SDL_GPUSampler *sharpen_sampler;
 static int dirty_y0, dirty_y1 = PSXGPU_VRAM_H; /* VRAM rows to upload before the next batch */
 static Ctx game_ctx = { .alpha = 1.0f }, win_ctx = { .alpha = 1.0f };
+
+static void drain_ctx(Ctx *x);
 
 static SDL_GPUShader *make_shader(const uint32_t *code, size_t size, SDL_GPUShaderStage stage, int storage) {
     SDL_GPUShaderCreateInfo si;
@@ -241,11 +245,7 @@ void PsxHw_Shutdown(void) {
     for (i = 0; i < 2; i++) {
         Ctx *x = i == 0 ? &game_ctx : &win_ctx;
 
-        if (x->last_fence != NULL) {
-            SDL_WaitForGPUFences(dev, true, &x->last_fence, 1);
-            SDL_ReleaseGPUFence(dev, x->last_fence);
-            x->last_fence = NULL;
-        }
+        drain_ctx(x);
         if (x->vbuf != NULL) {
             SDL_ReleaseGPUBuffer(dev, x->vbuf);
             SDL_ReleaseGPUTransferBuffer(dev, x->vtb);
@@ -640,15 +640,43 @@ static void transfer(Ctx *x, const PsxHdCmd *c, int scale) {
 /* PG.10 b3: submits cmd, then waits for the previous submission (normally done long ago). The
  * wait lets SDL_GPU recycle finished command buffers and cycled transfer buffers; without it they
  * piled up whenever the SDL renderer did not present (headless runs, a window held by a drag):
- * about 115 MB per second at 2x. */
+ * about 115 MB per second at 2x.
+ * PR.36: the wait is for the submission FENCES - 1 back, not the one just before. With smooth
+ * frames a game frame submits three times (draw, base copy, VRAM copy), behind the window
+ * thread's pictures on the same GPU queue: waiting for the previous one made every game frame wait
+ * for its own drawing and the window's queued pictures, and the game slowed down on slower GPUs and
+ * with the speed-up. A finished fence is released at once without waiting. */
 static void submit_ctx(Ctx *x, SDL_GPUCommandBuffer *cmd) {
     SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    int i, k;
 
-    if (x->last_fence != NULL) {
-        SDL_WaitForGPUFences(dev, true, &x->last_fence, 1);
-        SDL_ReleaseGPUFence(dev, x->last_fence);
+    for (i = k = 0; i < x->nfences; i++) {
+        if (SDL_QueryGPUFence(dev, x->fences[i])) {
+            SDL_ReleaseGPUFence(dev, x->fences[i]);
+        } else {
+            x->fences[k++] = x->fences[i];
+        }
     }
-    x->last_fence = fence;
+    x->nfences = k;
+    if (x->nfences == FENCES) {
+        SDL_WaitForGPUFences(dev, true, &x->fences[0], 1);
+        SDL_ReleaseGPUFence(dev, x->fences[0]);
+        memmove(&x->fences[0], &x->fences[1], (FENCES - 1) * sizeof(x->fences[0]));
+        x->nfences--;
+    }
+    if (fence != NULL) {
+        x->fences[x->nfences++] = fence;
+    }
+}
+
+/* every submission of x done (shutdown) */
+static void drain_ctx(Ctx *x) {
+    if (x->nfences > 0) {
+        SDL_WaitForGPUFences(dev, true, x->fences, (Uint32)x->nfences);
+    }
+    while (x->nfences > 0) {
+        SDL_ReleaseGPUFence(dev, x->fences[--x->nfences]);
+    }
 }
 
 static void submit(SDL_GPUCommandBuffer *cmd) {

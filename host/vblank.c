@@ -118,6 +118,7 @@ void Host_VBlank(void) {
         t0 = now;
         next = 1;
         XaDec_SetSpeed(mult);
+        PsxHd_SmoothHold(mult != 1); /* PR.36: no smooth frames while sped up */
     }
     if (fast || cur_mult == 0) {
         PsxHd_SetFrameTime(now); /* PR.34: no clock, the time it runs */

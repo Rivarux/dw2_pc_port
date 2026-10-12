@@ -1330,6 +1330,7 @@ static PsxGpuState log_st; /* the drawing state of its first command (the draw a
 static Layer lay_cur[MAX_LAYERS], lay_prev[MAX_LAYERS];
 static int nlay_cur, nlay_prev;
 static int scene_cur; /* PR.34: PsxHd_SmoothScene this frame */
+static int hold;      /* PR.36: no packages while the speed-up runs */
 static uint64_t frame_time, last_end_t;
 static Pkg pkgs[PKGS];
 static int pkg_latest = -1, pkg_in_use = -1; /* under pkg_lock */
@@ -1463,6 +1464,10 @@ void PsxHd_SmoothLayer(int id, uintptr_t start, uintptr_t end, int x, int y) {
 
 void PsxHd_SmoothScene(void) {
     scene_cur = PsxHd_SmoothActive();
+}
+
+void PsxHd_SmoothHold(int on) {
+    hold = on != 0;
 }
 
 void PsxHd_SetFrameTime(uint64_t ns) {
@@ -1614,7 +1619,7 @@ void PsxHd_EndFrame(void) {
     period = last_end_t != 0 && t > last_end_t ? t - last_end_t : 0;
     last_end_t = t;
     n_frames++;
-    ok = log_ok && nflog > 0 && log_sp != NULL && log_sp->tex != NULL && (nlay_cur > 0 || scene_cur);
+    ok = log_ok && nflog > 0 && log_sp != NULL && log_sp->tex != NULL && (nlay_cur > 0 || scene_cur) && !hold;
     made_seq = 0;
     if (ok) {
         blend_data();

@@ -84,6 +84,8 @@ the save (card1.mcd) from just before the problem.
 Version history
 ---------------
 
+v0.1.6  No stray "Attack" labels in the top left corner of the battle screen during the
+        interrupt prompt (issue #4).
 v0.1.5  Healing items and skills heal in battle again (they counted as attacks on PC).
 v0.1.4  The game can update itself.
 v0.1.3  Update check at start.

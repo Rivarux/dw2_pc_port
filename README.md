@@ -214,6 +214,7 @@ download page, or skip it. Saves and settings stay. Turn it off in F1 > Game or 
 
 ## Version history
 
+- **v0.1.6** (2026-10-12): no stray "Attack" labels in the top left corner of the battle screen during the interrupt prompt (issue #4).
 - **v0.1.5** (2026-10-10): healing items and skills heal in battle again (they counted as attacks on PC).
 - **v0.1.4** (2026-10-10): the game can update itself.
 - **v0.1.3** (2026-10-10): update check at start.

@@ -645,19 +645,11 @@ static void transfer(Ctx *x, const PsxHdCmd *c, int scale) {
  * frames a game frame submits three times (draw, base copy, VRAM copy), behind the window
  * thread's pictures on the same GPU queue: waiting for the previous one made every game frame wait
  * for its own drawing and the window's queued pictures, and the game slowed down on slower GPUs and
- * with the speed-up. A finished fence is released at once without waiting. */
+ * with the speed-up. Fences are released only after a wait: releasing one early once
+ * SDL_QueryGPUFence said done crashed SDL's Vulkan backend (uniform buffer pool) in long runs. */
 static void submit_ctx(Ctx *x, SDL_GPUCommandBuffer *cmd) {
     SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
-    int i, k;
 
-    for (i = k = 0; i < x->nfences; i++) {
-        if (SDL_QueryGPUFence(dev, x->fences[i])) {
-            SDL_ReleaseGPUFence(dev, x->fences[i]);
-        } else {
-            x->fences[k++] = x->fences[i];
-        }
-    }
-    x->nfences = k;
     if (x->nfences == FENCES) {
         SDL_WaitForGPUFences(dev, true, &x->fences[0], 1);
         SDL_ReleaseGPUFence(dev, x->fences[0]);

@@ -218,6 +218,7 @@ download page, or skip it. Saves and settings stay. Turn it off in F1 > Game or 
 
 ## Version history
 
+- **v0.1.9** (2026-10-12): fixes a crash with smooth frames on after a longer play session (new in v0.1.8).
 - **v0.1.8** (2026-10-12): the game no longer runs slower with smooth frames on some PCs (worse with the speed-up); smooth frames pause while the speed-up is on.
 - **v0.1.7** (2026-10-12): smooth frames: the city, the domains and the battles are drawn at the monitor's refresh rate, blended between game frames (F9, F1; on by default).
 - **v0.1.6** (2026-10-12): no stray "Attack" labels in the top left corner of the battle screen during the interrupt prompt (issue #4).

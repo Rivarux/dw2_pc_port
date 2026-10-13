@@ -157,7 +157,7 @@ Default bindings (change them in the F1 settings window):
 
 | Key | Does |
 |---|---|
-| F1 | Settings window (Esc closes it) |
+| F1 | Settings window (Esc closes it). Holding Start (Enter, or Start on a gamepad) for 1 second opens it too; Start on a gamepad closes it |
 | F3 | Speed-up on / off ("Speed unlocked" / "Speed locked") |
 | F5 | Render scale 1x .. 8x |
 | F6 | No wobble on / off |
@@ -189,8 +189,10 @@ Command line options (`dw2 --help` lists all of them):
 
 ## Settings
 
-F1 opens the settings window over the running game (mouse, keyboard or gamepad). The game
-does not see your input while it is open.
+F1 opens the settings window over the running game (mouse, keyboard or gamepad). Holding Start
+for 1 second opens it too (Enter on the keyboard, Start on a gamepad), and Start on a gamepad
+closes it; a short press of Start still goes to the game (when you let go). The game does not
+see your input while it is open.
 
 - **Display:** render scale, 16:9, no wobble, sharpening, smooth frames (the same as F5 / F7 / F6 /
   F8 / F9, which stay in sync with it; sharpening works on scales 2x and up, smooth frames need
@@ -200,7 +202,7 @@ does not see your input while it is open.
   for exclusive fullscreen.
 - **Controls:** two keys and one gamepad button per PS1 button. Click a slot and press the key
   or button; right click clears it; Esc cancels. Esc, Tab and the F keys are reserved. Left
-  stick as D-pad on / off. Reset restores the defaults.
+  stick as D-pad on / off. Hold Start to open the settings on / off. Reset restores the defaults.
 - **Game:** the speed-up multiplier for F3 (2x, 3x, 4x, 5x, 6x, 8x or no limit), and the
   update check.
 - **Sound:** volume.
@@ -220,6 +222,7 @@ download page, or skip it. Saves and settings stay. Turn it off in F1 > Game or 
 
 ## Version history
 
+- **v0.2.0** (2026-10-13): hold Start for 1 second (Enter, or Start on a gamepad) to open the settings window; Start on a gamepad closes it ([#5](https://github.com/Wyrelade/DW2-PC/issues/5)). A short Start press still goes to the game. Can be turned off in F1 > Controls. The window and the program now show the name DW2-PC.
 - **v0.1.9** (2026-10-12): fixes a crash with smooth frames on after a longer play session (new in v0.1.8).
 - **v0.1.8** (2026-10-12): the game no longer runs slower with smooth frames on some PCs (worse with the speed-up); smooth frames pause while the speed-up is on.
 - **v0.1.7** (2026-10-12): smooth frames: the city, the domains and the battles are drawn at the monitor's refresh rate, blended between game frames (F9, F1; on by default).

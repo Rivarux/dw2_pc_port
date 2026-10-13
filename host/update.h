@@ -13,8 +13,11 @@ extern "C" {
 #endif
 
 /* The version of this program, the release tag without "v". Bump it with each release. */
-#define DW2_VERSION "0.1.9"
+#define DW2_VERSION "0.2.0"
 #define DW2_RELEASES_URL "https://github.com/Wyrelade/DW2-PC/releases/latest"
+
+/* host/dw2.rc includes this file for the exe version info: only the defines above. */
+#ifndef RC_INVOKED
 
 /* main(), after Settings_Load: starts the check thread when wanted. force = --update-check. */
 void Update_Start(int no_window, int force);
@@ -40,5 +43,7 @@ const char *Update_StatusText(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* RC_INVOKED */
 
 #endif /* HOST_UPDATE_H */

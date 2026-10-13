@@ -27,6 +27,8 @@ Keys
 
 Arrow keys = D-pad, Z = Cross, X = Circle, A = Square, S = Triangle, Q / W = L1 / R1,
 E / R = L2 / R2, Enter = Start, Backspace = Select. Gamepads work out of the box.
+Hold Start (Enter, or Start on a gamepad) for 1 second to open the settings (F1); Start on a
+gamepad closes them.
 
 F1   settings (render scale, 16:9, no wobble, sharpening, smooth frames, window mode, key and gamepad
      remap, speed-up multiplier, update check, volume)
@@ -86,6 +88,10 @@ the save (card1.mcd) from just before the problem.
 Version history
 ---------------
 
+v0.2.0  Hold Start for 1 second (Enter, or Start on a gamepad) to open the settings
+        window; Start on a gamepad closes it. A short Start press still goes to the game.
+        Can be turned off in F1 > Controls. The window and the program now show the name
+        DW2-PC.
 v0.1.9  Fixes a crash with smooth frames on after a longer play session (new in v0.1.8).
 v0.1.8  The game no longer runs slower with smooth frames on some PCs (worse with the
         speed-up); smooth frames pause while the speed-up is on.

@@ -7,7 +7,8 @@
  * PR.3: a short notice top left (Ui_Notice: window mode after F11 / F1, F5 / F6 / F7 values),
  * drawn by the same layer for 2 s, with or without the windows open.
  * PR.10: "Press F1 for settings" at the bottom left of the picture while the title runs.
- * PR.15: Esc opens a "Quit?" box (Quit / Cancel) instead of quitting at once. */
+ * PR.15: Esc opens a "Quit?" box (Quit / Cancel) instead of quitting at once.
+ * PR.38 (issue #5): a gamepad's Start held opens the F1 window (host/input.c); Start closes it. */
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -28,6 +29,8 @@
 extern "C" int Host_WritePng(const char *path, const uint32_t *pixels, int w, int h);
 extern "C" int Host_TitleHint(void);
 extern "C" void Host_RequestQuit(const char *why);
+extern "C" int Host_InputStartHoldOn(void);
+extern "C" int Host_InputStartKeyHeld(const SDL_Event *e);
 
 namespace {
 
@@ -38,6 +41,8 @@ bool g_settings_at_start;
 bool g_shots; /* --ui-shots */
 /* PR.15 quit question: wanted (Esc toggles it), shown (the ImGui popup is open) */
 bool g_quit_want, g_quit_shown;
+/* PR.38: a gamepad's Start went down while the F1 window was open: its release closes it */
+bool g_start_close;
 
 /* PR.3 notice: any thread posts, the main thread draws */
 SDL_Mutex *g_notice_lock;
@@ -134,7 +139,8 @@ void draw_title_hint(void) {
     if (tag != NULL) {
         SDL_snprintf(text, sizeof(text), "Update %s available: press F1", tag);
     } else {
-        SDL_strlcpy(text, "Press F1 for settings", sizeof(text));
+        SDL_strlcpy(text, Host_InputStartHoldOn() ? "Press F1 or hold Start for settings" : "Press F1 for settings",
+                    sizeof(text));
     }
 
     if (!SDL_GetRenderLogicalPresentationRect(g_renderer, &r) || r.h <= 0) {
@@ -316,11 +322,29 @@ int Ui_Event(const SDL_Event *e) {
     if (SettingsUi_Capture(e)) {
         return 1;
     }
+    if (Host_InputStartKeyHeld(e)) {
+        return 1; /* PR.38: Enter held opened F1; its repeats must not press a button in it */
+    }
     if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_F1) {
         if (!e->key.repeat) {
             SettingsUi_SetOpen(!SettingsUi_IsOpen());
         }
         return 1;
+    }
+    /* PR.38: Start on a gamepad closes the F1 window, at the release: the game never sees it */
+    if ((e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e->type == SDL_EVENT_GAMEPAD_BUTTON_UP) &&
+        e->gbutton.button == Settings_Pad(3 /* Start */)) {
+        if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && SettingsUi_IsOpen()) {
+            g_start_close = true;
+            return 1;
+        }
+        if (e->type == SDL_EVENT_GAMEPAD_BUTTON_UP && g_start_close) {
+            g_start_close = false;
+            if (SettingsUi_IsOpen()) {
+                SettingsUi_SetOpen(0);
+            }
+            return 1;
+        }
     }
 #if DW2_DEV
     if (DevUi_Event(e)) {

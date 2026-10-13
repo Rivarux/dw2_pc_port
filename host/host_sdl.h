@@ -76,6 +76,10 @@ void Host_ClockStats(uint64_t *vblanks, uint64_t *flip_count, unsigned int *rest
 /* host/input.c */
 void Host_InputDevice(const SDL_Event *e);
 void Host_InputPress(const SDL_Event *e);
+void Host_InputRelease(const SDL_Event *e); /* key / gamepad button up (PR.38 Start hold) */
+int Host_InputStartHoldOn(void); /* main thread: a gamepad is on and holding Start opens F1 */
+/* Ui_Event: 1 = a key event of the Start key whose hold opened F1 (kept from the F1 window) */
+int Host_InputStartKeyHeld(const SDL_Event *e);
 void Host_InputInit(void);  /* main thread, before the game thread reads input */
 void Host_InputPoll(void);  /* main thread: keyboard / gamepad state after the event pump */
 void Host_InputLatch(void); /* game thread, once per VBlank: the buttons the pad replies use */

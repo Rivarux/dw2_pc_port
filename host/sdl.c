@@ -210,7 +210,7 @@ void Host_InitWindow(int no_window) {
     DevUi_WindowSize(&win_w, &win_h);
 #endif
     props = SDL_CreateProperties();
-    SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "DW2-Online");
+    SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "DW2-PC");
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, win_x);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, win_y);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, win_w);
@@ -950,6 +950,10 @@ void Host_PumpEvents(void) {
             break;
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
             Host_InputPress(&e);
+            break;
+        case SDL_EVENT_KEY_UP:
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
+            Host_InputRelease(&e);
             break;
         case SDL_EVENT_GAMEPAD_ADDED:
         case SDL_EVENT_GAMEPAD_REMOVED:

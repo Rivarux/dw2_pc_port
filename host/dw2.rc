@@ -1,3 +1,29 @@
 /* Windows: the program icon (misc/icon/dw2.ico, made by misc/icon/make_icon.py). SDL3 uses
    the first icon in the exe for its windows too. */
 1 ICON "misc/icon/dw2.ico"
+
+/* The name Windows shows for the program (Task Manager, file properties): DW2-PC, not the
+   file name. DW2_VERSION from host/update.h. */
+#include "update.h"
+
+1 VERSIONINFO
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "DW2-PC"
+            VALUE "FileVersion", DW2_VERSION
+            VALUE "InternalName", "dw2"
+            VALUE "OriginalFilename", "dw2.exe"
+            VALUE "ProductName", "DW2-PC"
+            VALUE "ProductVersion", DW2_VERSION
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

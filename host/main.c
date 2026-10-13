@@ -386,6 +386,7 @@ HOST_ENTRY int main(int argc, char **argv) {
 #ifdef _WIN32
     Host_AttachParentConsole();
 #endif
+    SDL_SetAppMetadata("DW2-PC", DW2_VERSION, NULL);
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--vblanks") == 0 && i + 1 < argc) {
             max_vblanks = (unsigned int)strtoul(argv[++i], NULL, 0);

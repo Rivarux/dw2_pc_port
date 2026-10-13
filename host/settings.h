@@ -25,6 +25,7 @@ enum {
     SET_SPEED,      /* PR.28 speed-up while unlocked (F3): 2..8 x, 0 = no limit */
     SET_UPDATE_CHECK, /* 0 / 1: PR.30 ask GitHub for a newer release at start */
     SET_SMOOTH,       /* 0 / 1: PR.34 smooth frames (F9), on by default */
+    SET_START_HOLD,   /* 0 / 1: PR.38 gamepad Start held 1 s opens F1 (issue #5), on by default */
     SET_COUNT
 };
 enum { SET_RENDERER_GPU, SET_RENDERER_SOFT };

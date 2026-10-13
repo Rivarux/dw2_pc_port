@@ -172,7 +172,7 @@ target_include_directories(dw2_imgui PRIVATE ${IMGUI_DIR})
 target_link_libraries(dw2_imgui PRIVATE SDL3::SDL3-shared)
 set(DEV_SRC ${UI_SRC} $<TARGET_OBJECTS:dw2_imgui>)
 
-# Windows: the program icon (host/dw2.rc -> misc/icon/dw2.ico) through windres. A custom command
+# Windows: the program icon and version info (host/dw2.rc) through windres. A custom command
 # run from the repo root with relative paths: windres hands -I paths unquoted to its preprocessor,
 # so the usual RC language support breaks on a source path with spaces.
 set(ICON_SRC)
@@ -183,7 +183,7 @@ if(WIN32)
     add_custom_command(OUTPUT ${ICON_SRC}
         COMMAND ${DW2_WINDRES} -O coff host/dw2.rc ${ICON_SRC}
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        DEPENDS ${CMAKE_SOURCE_DIR}/host/dw2.rc ${CMAKE_SOURCE_DIR}/misc/icon/dw2.ico
+        DEPENDS ${CMAKE_SOURCE_DIR}/host/dw2.rc ${CMAKE_SOURCE_DIR}/host/update.h ${CMAKE_SOURCE_DIR}/misc/icon/dw2.ico
         VERBATIM)
     set_source_files_properties(${ICON_SRC} PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
 endif()

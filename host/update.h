@@ -13,7 +13,7 @@ extern "C" {
 #endif
 
 /* The version of this program, the release tag without "v". Bump it with each release. */
-#define DW2_VERSION "0.2.0"
+#define DW2_VERSION "0.2.1"
 #define DW2_RELEASES_URL "https://github.com/Wyrelade/DW2-PC/releases/latest"
 
 /* host/dw2.rc includes this file for the exe version info: only the defines above. */

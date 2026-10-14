@@ -269,16 +269,16 @@ void bind_button(int bit, int slot, const char *label) {
 
 void controls_tab(void) {
     bool stick = Settings_Get(SET_STICK_DPAD) != 0;
-    bool hold = Settings_Get(SET_START_HOLD) != 0;
+    bool hold = Settings_Get(SET_SELECT_HOLD) != 0;
 
     if (ImGui::Checkbox("Left stick moves like the D-pad", &stick)) {
         Settings_Set(SET_STICK_DPAD, stick);
     }
-    if (ImGui::Checkbox("Hold Start (Enter or the gamepad's Start) to open this window", &hold)) {
-        Settings_Set(SET_START_HOLD, hold);
+    if (ImGui::Checkbox("Hold Select (Backspace or the gamepad's Back / Select) to open this window", &hold)) {
+        Settings_Set(SET_SELECT_HOLD, hold);
     }
-    ImGui::TextDisabled("Held for 1 second. A short press is Start for the game, sent when you let go.");
-    ImGui::TextDisabled("Start on the gamepad closes this window.");
+    ImGui::TextDisabled("Held for 1 second. A short press is Select for the game, sent when you let go.");
+    ImGui::TextDisabled("Start or Select on the gamepad closes this window.");
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("Click a slot, then press the key or gamepad button. Right click clears it.");
     ImGui::PopStyleColor();

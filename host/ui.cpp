@@ -8,7 +8,7 @@
  * drawn by the same layer for 2 s, with or without the windows open.
  * PR.10: "Press F1 for settings" at the bottom left of the picture while the title runs.
  * PR.15: Esc opens a "Quit?" box (Quit / Cancel) instead of quitting at once.
- * PR.38 (issue #5): a gamepad's Start held opens the F1 window (host/input.c); Start closes it. */
+ * PR.38 (issue #5): Select held opens the F1 window (host/input.c); Start or Select closes it. */
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -29,8 +29,8 @@
 extern "C" int Host_WritePng(const char *path, const uint32_t *pixels, int w, int h);
 extern "C" int Host_TitleHint(void);
 extern "C" void Host_RequestQuit(const char *why);
-extern "C" int Host_InputStartHoldOn(void);
-extern "C" int Host_InputStartKeyHeld(const SDL_Event *e);
+extern "C" int Host_InputSelectHoldOn(void);
+extern "C" int Host_InputSelectKeyHeld(const SDL_Event *e);
 
 namespace {
 
@@ -41,8 +41,9 @@ bool g_settings_at_start;
 bool g_shots; /* --ui-shots */
 /* PR.15 quit question: wanted (Esc toggles it), shown (the ImGui popup is open) */
 bool g_quit_want, g_quit_shown;
-/* PR.38: a gamepad's Start went down while the F1 window was open: its release closes it */
-bool g_start_close;
+/* PR.38: the gamepad button (Start or Select) that went down while the F1 window was open, -1 if
+ * none: its release closes the window */
+int g_close_button = -1;
 
 /* PR.3 notice: any thread posts, the main thread draws */
 SDL_Mutex *g_notice_lock;
@@ -139,7 +140,7 @@ void draw_title_hint(void) {
     if (tag != NULL) {
         SDL_snprintf(text, sizeof(text), "Update %s available: press F1", tag);
     } else {
-        SDL_strlcpy(text, Host_InputStartHoldOn() ? "Press F1 or hold Start for settings" : "Press F1 for settings",
+        SDL_strlcpy(text, Host_InputSelectHoldOn() ? "Press F1 or hold Select for settings" : "Press F1 for settings",
                     sizeof(text));
     }
 
@@ -322,8 +323,8 @@ int Ui_Event(const SDL_Event *e) {
     if (SettingsUi_Capture(e)) {
         return 1;
     }
-    if (Host_InputStartKeyHeld(e)) {
-        return 1; /* PR.38: Enter held opened F1; its repeats must not press a button in it */
+    if (Host_InputSelectKeyHeld(e)) {
+        return 1; /* PR.38: a Select key held opened F1; its repeats must not press a button in it */
     }
     if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_F1) {
         if (!e->key.repeat) {
@@ -331,15 +332,15 @@ int Ui_Event(const SDL_Event *e) {
         }
         return 1;
     }
-    /* PR.38: Start on a gamepad closes the F1 window, at the release: the game never sees it */
-    if ((e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e->type == SDL_EVENT_GAMEPAD_BUTTON_UP) &&
-        e->gbutton.button == Settings_Pad(3 /* Start */)) {
-        if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && SettingsUi_IsOpen()) {
-            g_start_close = true;
+    /* PR.38: Start or Select on a gamepad closes the F1 window, at the release: the game never sees it */
+    if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e->type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+        if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && SettingsUi_IsOpen() && g_close_button < 0 &&
+            (e->gbutton.button == Settings_Pad(3 /* Start */) || e->gbutton.button == Settings_Pad(0 /* Select */))) {
+            g_close_button = e->gbutton.button;
             return 1;
         }
-        if (e->type == SDL_EVENT_GAMEPAD_BUTTON_UP && g_start_close) {
-            g_start_close = false;
+        if (e->type == SDL_EVENT_GAMEPAD_BUTTON_UP && e->gbutton.button == g_close_button) {
+            g_close_button = -1;
             if (SettingsUi_IsOpen()) {
                 SettingsUi_SetOpen(0);
             }

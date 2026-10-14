@@ -17,9 +17,9 @@
 
 #define STICK_ON 16384   /* left stick past half: D-pad (stick_dpad setting) */
 
-#define START_BIT 3          /* PAD_START: its gamepad binding is Settings_Pad(START_BIT) */
-#define START_HOLD_MS 1000   /* PR.38: Start held this long opens the F1 window */
-#define START_TAP_MS 80      /* PR.38: a short Start press reaches the game for this long */
+#define SELECT_BIT 0          /* PAD_SELECT: its gamepad binding is Settings_Pad(SELECT_BIT) */
+#define SELECT_HOLD_MS 1000  /* PR.38: Select held this long opens the F1 window */
+#define SELECT_TAP_MS 80     /* PR.38: a short Select press reaches the game for this long */
 
 /* PR.2: the key and gamepad bindings come from the settings (host/settings.c; defaults = the
  * tables this file had before: arrows, Z X A S, Q W E R, Return, Backspace / Right Shift; the
@@ -52,39 +52,41 @@ static int script_port1; /* a --press2 entry exists: port 1 is a scripted pad */
 static int pad2_keys;    /* --pad2-keys: port 1 connected, Tab moves the keyboard between ports */
 static int kbd_port;     /* port the keyboard drives */
 
-/* PR.38 (issue #5): with the start_hold_menu setting, Start (a gamepad's Start button, or a key
- * bound to Start: Enter) opens the F1 window when held for START_HOLD_MS. The game sees that Start
- * only when it is let go before then, as a short press (START_TAP_MS) at the release. Per gamepad
- * port, plus KBD for the keyboard (its tap goes to kbd_port). Main thread. */
+/* PR.38 (issue #5): with the select_hold_menu setting, Select (a gamepad's Back / Select button,
+ * or a key bound to Select: Backspace, Right Shift) opens the F1 window when held for
+ * SELECT_HOLD_MS. The game sees that Select only when it is let go before then, as a short press
+ * (SELECT_TAP_MS) at the release. Select, not Start: the game reads a held Start (dungeon automap
+ * colours, src/stag4000/automap.c), Select only as a press. Per gamepad port, plus KBD for the
+ * keyboard (its tap goes to kbd_port). Main thread. */
 #define KBD PORTS
 static struct {
-    int down;   /* Start is down since t */
+    int down;   /* Select is down since t */
     int opened; /* this hold opened the F1 window */
     Uint64 t, tap_end;
-} start_hold[PORTS + 1];
+} select_hold[PORTS + 1];
 
-/* The gamepad button bound to Start while the hold is on, else -1 (off, or bound to a trigger). */
-static int start_hold_button(void) {
-    int c = Settings_Pad(START_BIT);
+/* The gamepad button bound to Select while the hold is on, else -1 (off, or bound to a trigger). */
+static int select_hold_button(void) {
+    int c = Settings_Pad(SELECT_BIT);
 
-    return Settings_Get(SET_START_HOLD) && c >= 0 && c < SDL_GAMEPAD_BUTTON_COUNT ? c : -1;
+    return Settings_Get(SET_SELECT_HOLD) && c >= 0 && c < SDL_GAMEPAD_BUTTON_COUNT ? c : -1;
 }
 
-int Host_InputStartHoldOn(void) {
-    return start_hold_button() >= 0 && (pads[0] != NULL || pads[1] != NULL);
+int Host_InputSelectHoldOn(void) {
+    return select_hold_button() >= 0 && (pads[0] != NULL || pads[1] != NULL);
 }
 
-static void start_down(int i) {
-    start_hold[i].down = 1;
-    start_hold[i].opened = 0;
-    start_hold[i].t = SDL_GetTicks();
+static void select_down(int i) {
+    select_hold[i].down = 1;
+    select_hold[i].opened = 0;
+    select_hold[i].t = SDL_GetTicks();
 }
 
-static void start_up(int i) {
-    if (start_hold[i].down) {
-        start_hold[i].down = 0;
-        if (!start_hold[i].opened && !Ui_BlocksGameInput()) {
-            start_hold[i].tap_end = SDL_GetTicks() + START_TAP_MS;
+static void select_up(int i) {
+    if (select_hold[i].down) {
+        select_hold[i].down = 0;
+        if (!select_hold[i].opened && !Ui_BlocksGameInput()) {
+            select_hold[i].tap_end = SDL_GetTicks() + SELECT_TAP_MS;
         }
     }
 }
@@ -181,7 +183,7 @@ void Host_InputDevice(const SDL_Event *e) {
                 SDL_CloseGamepad(pads[p]);
                 pads[p] = NULL;
                 SDL_SetAtomicInt(&pad_on[p], 0);
-                SDL_zero(start_hold[p]);
+                SDL_zero(select_hold[p]);
                 printf("[input] gamepad %u removed from port %d\n", (unsigned)id, p);
             }
         }
@@ -238,19 +240,19 @@ void Host_InputPress(const SDL_Event *e) {
             return;
         }
         bits[kbd_port] = key_bits(e->key.scancode);
-        if ((bits[kbd_port] & PAD_START) && Settings_Get(SET_START_HOLD)) {
+        if ((bits[kbd_port] & PAD_SELECT) && Settings_Get(SET_SELECT_HOLD)) {
             if (!e->key.repeat && !Ui_BlocksGameInput()) {
-                start_down(KBD);
+                select_down(KBD);
             }
-            bits[kbd_port] &= (unsigned short)~PAD_START; /* sent at the release, if short */
+            bits[kbd_port] &= (unsigned short)~PAD_SELECT; /* sent at the release, if short */
         }
     } else {
         for (p = 0; p < PORTS; p++) {
             if (pads[p] != NULL && SDL_GetGamepadID(pads[p]) == e->gbutton.which) {
                 bits[p] = pad_bits(e->gbutton.button);
-                if (e->gbutton.button == start_hold_button() && !Ui_BlocksGameInput()) {
-                    start_down(p);
-                    bits[p] &= (unsigned short)~PAD_START; /* sent at the release, if short */
+                if (e->gbutton.button == select_hold_button() && !Ui_BlocksGameInput()) {
+                    select_down(p);
+                    bits[p] &= (unsigned short)~PAD_SELECT; /* sent at the release, if short */
                 }
             }
         }
@@ -270,26 +272,26 @@ void Host_InputRelease(const SDL_Event *e) {
     int p;
 
     if (e->type == SDL_EVENT_KEY_UP) {
-        if (key_bits(e->key.scancode) & PAD_START) {
-            start_up(KBD);
+        if (key_bits(e->key.scancode) & PAD_SELECT) {
+            select_up(KBD);
         }
         return;
     }
     for (p = 0; p < PORTS; p++) {
         if (pads[p] != NULL && SDL_GetGamepadID(pads[p]) == e->gbutton.which &&
-            e->gbutton.button == start_hold_button()) {
-            start_up(p);
+            e->gbutton.button == select_hold_button()) {
+            select_up(p);
         }
     }
 }
 
-int Host_InputStartKeyHeld(const SDL_Event *e) {
-    if ((e->type != SDL_EVENT_KEY_DOWN && e->type != SDL_EVENT_KEY_UP) || !start_hold[KBD].down ||
-        !start_hold[KBD].opened || !(key_bits(e->key.scancode) & PAD_START)) {
+int Host_InputSelectKeyHeld(const SDL_Event *e) {
+    if ((e->type != SDL_EVENT_KEY_DOWN && e->type != SDL_EVENT_KEY_UP) || !select_hold[KBD].down ||
+        !select_hold[KBD].opened || !(key_bits(e->key.scancode) & PAD_SELECT)) {
         return 0;
     }
     if (e->type == SDL_EVENT_KEY_UP) {
-        start_hold[KBD].down = 0;
+        select_hold[KBD].down = 0;
     }
     return 1;
 }
@@ -311,18 +313,18 @@ void Host_InputPoll(void) {
     const bool *keys = SDL_GetKeyboardState(NULL);
     unsigned short b[PORTS] = { 0, 0 };
     int bit, slot, p;
-    int hold_button = start_hold_button();
+    int hold_button = select_hold_button();
     Uint64 now = SDL_GetTicks();
 
     for (p = 0; p <= KBD; p++) {
-        if (start_hold[p].down && !start_hold[p].opened && now - start_hold[p].t >= START_HOLD_MS) {
-            start_hold[p].opened = 1;
+        if (select_hold[p].down && !select_hold[p].opened && now - select_hold[p].t >= SELECT_HOLD_MS) {
+            select_hold[p].opened = 1;
             if (!Ui_Headless() && !SettingsUi_IsOpen()) {
                 SettingsUi_SetOpen(1);
                 if (p == KBD) {
-                    printf("[input] Start held on the keyboard: settings\n");
+                    printf("[input] Select held on the keyboard: settings\n");
                 } else {
-                    printf("[input] Start held on port %d: settings\n", p);
+                    printf("[input] Select held on port %d: settings\n", p);
                 }
                 fflush(stdout);
             }
@@ -340,11 +342,11 @@ void Host_InputPoll(void) {
             }
         }
     }
-    if (Settings_Get(SET_START_HOLD)) {
-        /* PR.38: a held Start key stays away from the game; a short press shows after the release */
-        b[kbd_port] &= (unsigned short)~PAD_START;
-        if (now < start_hold[KBD].tap_end) {
-            b[kbd_port] |= PAD_START;
+    if (Settings_Get(SET_SELECT_HOLD)) {
+        /* PR.38: a held Select key stays away from the game; a short press shows after the release */
+        b[kbd_port] &= (unsigned short)~PAD_SELECT;
+        if (now < select_hold[KBD].tap_end) {
+            b[kbd_port] |= PAD_SELECT;
         }
     }
     for (p = 0; p < PORTS; p++) {
@@ -368,12 +370,12 @@ void Host_InputPoll(void) {
                     (y >= STICK_ON ? PAD_DOWN : 0);
         }
         if (hold_button >= 0) {
-            /* PR.38: a held Start stays away from the game; a short press shows after the release */
+            /* PR.38: a held Select stays away from the game; a short press shows after the release */
             if (SDL_GetGamepadButton(pads[p], (SDL_GamepadButton)hold_button)) {
-                b[p] &= (unsigned short)~PAD_START;
+                b[p] &= (unsigned short)~PAD_SELECT;
             }
-            if (now < start_hold[p].tap_end) {
-                b[p] |= PAD_START;
+            if (now < select_hold[p].tap_end) {
+                b[p] |= PAD_SELECT;
             }
         }
     }

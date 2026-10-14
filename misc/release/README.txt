@@ -27,8 +27,8 @@ Keys
 
 Arrow keys = D-pad, Z = Cross, X = Circle, A = Square, S = Triangle, Q / W = L1 / R1,
 E / R = L2 / R2, Enter = Start, Backspace = Select. Gamepads work out of the box.
-Hold Start (Enter, or Start on a gamepad) for 1 second to open the settings (F1); Start on a
-gamepad closes them.
+Hold Select (Backspace, or Back / Select on a gamepad) for 1 second to open the settings (F1);
+Start or Select on a gamepad closes them.
 
 F1   settings (render scale, 16:9, no wobble, sharpening, smooth frames, window mode, key and gamepad
      remap, speed-up multiplier, update check, volume)
@@ -88,6 +88,10 @@ the save (card1.mcd) from just before the problem.
 Version history
 ---------------
 
+v0.2.1  Hold Select for 1 second (Backspace, or Back / Select on a gamepad) to open the
+        settings window, instead of Start. The game uses a held Start in dungeons (the
+        automap look), so holding Start works as on the PS1 again. A short Select press
+        still goes to the game. Start or Select on a gamepad closes the window.
 v0.2.0  Hold Start for 1 second (Enter, or Start on a gamepad) to open the settings
         window; Start on a gamepad closes it. A short Start press still goes to the game.
         Can be turned off in F1 > Controls. The window and the program now show the name

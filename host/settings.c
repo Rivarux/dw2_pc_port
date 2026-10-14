@@ -46,7 +46,7 @@ const int Settings_ButtonOrder[16] = {
 static const char *const int_keys[SET_COUNT] = {
     "scale", "wide", "pgxp", "renderer", "volume", "stick_dpad", "window_mode", "fullscreen_display", "window_maximized",
     "sharpen", "title_hint", "speed", "update_check", "smooth",
-    "start_hold_menu",
+    "select_hold_menu",
 };
 static const int int_default[SET_COUNT] = { 1, 0, 0, SET_RENDERER_GPU, 100, 1, SET_WINDOW_WINDOWED, 0, 0, 0, 1, 3, 1, 1, 1 };
 static const int int_min[SET_COUNT] = { 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -615,9 +615,9 @@ void Settings_Load(int no_window) {
     printf("[settings] scale %d, wide %d, pgxp %d, renderer %s, volume %d, stick_dpad %d%s\n", Settings_Get(SET_SCALE),
            Settings_Get(SET_WIDE), Settings_Get(SET_PGXP), Settings_Get(SET_RENDERER) == SET_RENDERER_SOFT ? "soft" : "gpu",
            Settings_Get(SET_VOLUME), Settings_Get(SET_STICK_DPAD), set_count != 0 ? " (with --settings-set)" : "");
-    printf("[settings] sharpen %d, title_hint %d, speed %d, update_check %d, smooth %d, start_hold_menu %d\n",
+    printf("[settings] sharpen %d, title_hint %d, speed %d, update_check %d, smooth %d, select_hold_menu %d\n",
            Settings_Get(SET_SHARPEN), Settings_Get(SET_TITLE_HINT), Settings_Get(SET_SPEED),
-           Settings_Get(SET_UPDATE_CHECK), Settings_Get(SET_SMOOTH), Settings_Get(SET_START_HOLD));
+           Settings_Get(SET_UPDATE_CHECK), Settings_Get(SET_SMOOTH), Settings_Get(SET_SELECT_HOLD));
     {
         char fm[32], ws[32], wp[32];
 
@@ -713,7 +713,7 @@ static int write_line(SDL_IOStream *io, const char *s) {
 
 static int save(void) {
     static const int order[K_KEY] = {
-        SET_SCALE, SET_WIDE, SET_PGXP, SET_SHARPEN, SET_SMOOTH, SET_RENDERER, SET_VOLUME, SET_STICK_DPAD, SET_START_HOLD,
+        SET_SCALE, SET_WIDE, SET_PGXP, SET_SHARPEN, SET_SMOOTH, SET_RENDERER, SET_VOLUME, SET_STICK_DPAD, SET_SELECT_HOLD,
         SET_TITLE_HINT, SET_SPEED, SET_UPDATE_CHECK, SET_WINDOW_MODE, SET_FS_DISPLAY, K_FSMODE, K_WINSIZE, K_WINPOS, SET_WIN_MAX,
     };
     char seen[K_COUNT] = { 0 };

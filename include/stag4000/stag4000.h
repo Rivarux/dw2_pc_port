@@ -388,7 +388,8 @@ typedef struct {
     /* 0xC */ s32 msgBase;
 } Stg40ItemReq;
 
-/* Work of the task behind Stg40_FloorTask. */
+/* Work of the task behind Stg40_FloorTask (retail; natively the fields of Stg40FloorWork). */
+#ifndef DW2_NATIVE
 typedef struct {
     u8 _pad0000[0x1E90];
     /* 0x1E90 */ s32 scrollGoalX;
@@ -397,6 +398,7 @@ typedef struct {
     /* 0x1E9C */ s32 scrollStartY;
     /* 0x1EA0 */ s32 scrollFrames;
 } Stg40FloorScrollView;
+#endif
 
 /* 0x20-byte block copied by Stg40_CamStartMove. */
 typedef struct {
@@ -547,8 +549,24 @@ typedef struct {
     /* 0x1414 */ s32 texCount;   /* count of the three arrays above */
     /* 0x1418 */ s32 texIds[8]; /* texture ids, -1 terminated */
     /* 0x1438 */ s32 primCount;   /* count of prims */
+#ifdef DW2_NATIVE
+    /* retail runs past the 27 (up to 66 templates, to 0x1E8C) into the scroll fields at 0x1E90 */
+    /* 0x143C */ Stg40FT4 prims[66]; /* textured tile templates; [26] is semi-transparent */
+    /* Retail keeps the scroll at work 0x1E90.. (Stg40FloorScrollView). Natively that fixed offset
+     * falls inside prims (the 16:9 columns of PG.3 and the 64-bit pointers move prims), so every
+     * scroll (the enemy info look) overwrote a tile template and its tiles drew black. */
+    s32 scrollGoalX;
+    s32 scrollGoalY;
+    s32 scrollStartX;
+    s32 scrollStartY;
+    s32 scrollFrames;
+#else
     /* 0x143C */ Stg40FT4 prims[27]; /* textured tile templates; [26] is semi-transparent */
+#endif
 } Stg40FloorWork;
+#ifdef DW2_NATIVE
+#define Stg40FloorScrollView Stg40FloorWork
+#endif
 
 /* arg0 of Stg40_ObjQueueFiles: a file-queue countdown (0x28) gated by 0x34. */
 typedef struct {

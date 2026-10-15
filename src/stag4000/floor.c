@@ -38,8 +38,9 @@ TaskDesc Stg40_FloorDesc = {
     /* retail 0x1EA4: prims[] at 0x143C runs past the 27 declared (up to 66 templates, 0xA68 bytes).
      * Native: measured from where prims[] really starts (the wider window of PG.3 and the 8-byte
      * pointers of x64 move it); the old "0x1EA4 + window" sum left the last templates outside the
-     * block on x64 (PR.19: a tile drew black once its neighbour block overwrote them). */
-    __builtin_offsetof(Stg40FloorWork, prims) + (0x1EA4 - 0x143C), 0,
+     * block on x64 (PR.19: a tile drew black once its neighbour block overwrote them).
+     * The struct now declares all 66 templates and the scroll fields after them (PR.39). */
+    sizeof(Stg40FloorWork), 0,
 #else
     0x1EA4, 0,
 #endif

@@ -21,6 +21,12 @@ Getting started
 
 You can also drop the image onto dw2.exe, or start the game with --disc PATH.
 
+Spanish (Espanol): the game also runs with Alemito's Spanish fan translation. Put the
+Spanish-patched image (the USA disc with the translation applied) next to the program instead
+of the English one. To switch languages, delete dw2.pak and start the game with the other
+image. Saves work with both. Some text in the program itself stays English.
+Translation by Alemito, used with permission.
+
 
 Keys
 ----
@@ -88,6 +94,8 @@ the save (card1.mcd) from just before the problem.
 Version history
 ---------------
 
+v1.0.0-beta  English and Spanish: a disc image with Alemito's Spanish translation builds a
+        Spanish game (see Getting started).
 v0.2.2  Dungeon floor tiles no longer turn black after looking at the enemies in a
         room (Square).
 v0.2.1  Hold Select for 1 second (Backspace, or Back / Select on a gamepad) to open the

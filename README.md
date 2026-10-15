@@ -132,6 +132,13 @@ You can also drop the image onto `dw2.exe`, or pass it with `--disc PATH`. The i
 sit in the user data folder (`%APPDATA%\DW2-Online\` on Windows, `~/.local/share/DW2-Online/`
 on Linux); the pack goes there too when the exe's folder is not writable.
 
+**Spanish (Español):** the game also runs with Alemito's Spanish fan translation. Put the
+Spanish-patched image (the USA disc with the translation applied) next to `dw2.exe` instead of
+the English one. The game checks it the same way: every file the translation changes must be
+the translated one, all other files the original. To switch languages, delete `dw2.pak` and
+start the game with the other image. Saves work with both. Some text in the program itself
+stays English.
+
 The Linux build needs SDL3 3.4 or newer from your distribution and glibc 2.43 or newer (it is
 built on Ubuntu 26.04). A `libSDL3.so.0` next to `dw2` is used before the system one. On older
 systems, [build it yourself](#building).
@@ -222,6 +229,7 @@ download page, or skip it. Saves and settings stay. Turn it off in F1 > Game or 
 
 ## Version history
 
+- **v1.0.0-beta** (2026-10-15): English and Spanish. A disc image with Alemito's Spanish translation builds a Spanish game ([#7](https://github.com/Wyrelade/DW2-PC/pull/7)); see [Getting started](#getting-started).
 - **v0.2.2** (2026-10-15): dungeon floor tiles no longer turn black after looking at the enemies in a room (Square).
 - **v0.2.1** (2026-10-14): hold Select for 1 second (Backspace, or Back / Select on a gamepad) to open the settings window, instead of Start ([#5](https://github.com/Wyrelade/DW2-PC/issues/5)). The game uses a held Start in dungeons (the automap look), so holding Start works as on the PS1 again. A short Select press still goes to the game (automap size). Start or Select on a gamepad closes the window.
 - **v0.2.0** (2026-10-13): hold Start for 1 second (Enter, or Start on a gamepad) to open the settings window; Start on a gamepad closes it ([#5](https://github.com/Wyrelade/DW2-PC/issues/5)). A short Start press still goes to the game. Can be turned off in F1 > Controls. The window and the program now show the name DW2-PC.
@@ -329,6 +337,10 @@ doc/       game state map, pack format, notes on the PlayStation library calls
 - Decomp workflow and toolchain derived from the Parasite Eve 2 decomp.
 - DW2 file-format documentation by RmBeastbow.
 - Thanks to ThirstyWraith for the stage overlay and battle notes.
+- Spanish translation by Alemito, used with
+  [permission](https://www.reddit.com/r/DigimonWorld/comments/1vid3rf/comment/pgw4e13/).
+  Spanish support first proposed by [Threw96](https://github.com/Threw96)
+  ([#7](https://github.com/Wyrelade/DW2-PC/pull/7)).
 - [SDL3](https://libsdl.org/) (zlib license), [Dear ImGui](https://github.com/ocornut/imgui)
   (MIT license, `host/imgui/LICENSE.txt`), [miniz](https://github.com/richgel999/miniz) (MIT
   license, `host/miniz/LICENSE`), [Monocypher](https://monocypher.org/) (CC0,

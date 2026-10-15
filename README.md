@@ -222,6 +222,7 @@ download page, or skip it. Saves and settings stay. Turn it off in F1 > Game or 
 
 ## Version history
 
+- **v0.2.2** (2026-10-15): dungeon floor tiles no longer turn black after looking at the enemies in a room (Square).
 - **v0.2.1** (2026-10-14): hold Select for 1 second (Backspace, or Back / Select on a gamepad) to open the settings window, instead of Start ([#5](https://github.com/Wyrelade/DW2-PC/issues/5)). The game uses a held Start in dungeons (the automap look), so holding Start works as on the PS1 again. A short Select press still goes to the game (automap size). Start or Select on a gamepad closes the window.
 - **v0.2.0** (2026-10-13): hold Start for 1 second (Enter, or Start on a gamepad) to open the settings window; Start on a gamepad closes it ([#5](https://github.com/Wyrelade/DW2-PC/issues/5)). A short Start press still goes to the game. Can be turned off in F1 > Controls. The window and the program now show the name DW2-PC.
 - **v0.1.9** (2026-10-12): fixes a crash with smooth frames on after a longer play session (new in v0.1.8).

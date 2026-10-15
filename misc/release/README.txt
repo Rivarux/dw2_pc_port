@@ -88,6 +88,8 @@ the save (card1.mcd) from just before the problem.
 Version history
 ---------------
 
+v0.2.2  Dungeon floor tiles no longer turn black after looking at the enemies in a
+        room (Square).
 v0.2.1  Hold Select for 1 second (Backspace, or Back / Select on a gamepad) to open the
         settings window, instead of Start. The game uses a held Start in dungeons (the
         automap look), so holding Start works as on the PS1 again. A short Select press

@@ -42,6 +42,9 @@
 #define PAK_MAGIC "DW2PAK\x1a\0"
 /* host/pak.c: the compiled-in manifest, the exe hash and the 0xE5B file hashes (exits if bad). */
 void Pak_ParseManifest(Uint8 *exe_sha, Uint8 (*sha)[32]);
+/* 1 English file, 2 Spanish translation file ("es" manifest line), 0 neither. */
+int Pak_FileMatch(int id, const Uint8 *sha, Uint8 (*manifest)[32]);
+extern int Pak_EsFiles;
 /* host/pakbuild.c, main thread, before the game window. Host_DiscFind: the disc image to build
  * from (`disc`, else the exe folder, else the user data folder; with a window and none found, a
  * file dialog); a malloc'd path (SDL_free) of an image whose SLUS_011.93 matches the manifest,

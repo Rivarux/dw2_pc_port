@@ -90,12 +90,18 @@ static int hash32(const char *s, Uint8 *out) {
     return 0;
 }
 
+/* The "es" manifest lines: the files Alemito's Spanish translation changes, as translated. */
+static Uint8 es_sha[PAK_FILES][32];
+static char es_file[PAK_FILES];
+int Pak_EsFiles;
+
 /* The manifest: the exe line (SLUS_011.93, which holds the file table; host/pakbuild.c checks
- * it) and the 0xE5B file hashes. */
+ * it), the 0xE5B file hashes and the "es" lines. */
 void Pak_ParseManifest(Uint8 *exe_sha, Uint8 (*sha)[32]) {
     const char *p = Pak_Manifest;
     int seen = 0;
     int exe_seen = 0;
+    int es;
 
     while (*p != 0) {
         const char *line = p;
@@ -115,22 +121,37 @@ void Pak_ParseManifest(Uint8 *exe_sha, Uint8 (*sha)[32]) {
             exe_seen = 1;
             continue;
         }
-        id = strtoul(line, &after, 16);
-        if (after == line || *after != ' ' || id >= PAK_FILES) {
+        es = strncmp(line, "es ", 3) == 0;
+        id = strtoul(line + es * 3, &after, 16);
+        if (after == line + es * 3 || *after != ' ' || id >= PAK_FILES) {
             fprintf(stderr, "[pak] bad manifest line: %.40s\n", line);
             exit(1);
         }
-        if (hash32(after + 1, sha[id]) < 0) {
+        if (hash32(after + 1, es ? es_sha[id] : sha[id]) < 0) {
             fprintf(stderr, "[pak] bad manifest hash for 0x%03lX\n", id);
             exit(1);
         }
-        seen++;
+        if (es) {
+            Pak_EsFiles += !es_file[id];
+            es_file[id] = 1;
+        } else {
+            seen++;
+        }
     }
     if (seen != PAK_FILES || !exe_seen) {
         fprintf(stderr, "[pak] manifest has %d files%s, want %d and the exe\n", seen, exe_seen ? "" : ", no exe",
                 PAK_FILES);
         exit(1);
     }
+}
+
+/* File `id` with SHA-256 `sha`: 1 the English disc's file, 2 the Spanish translation's (an "es"
+ * file), 0 neither. A disc or pack is English, or Spanish with all Pak_EsFiles translated. */
+int Pak_FileMatch(int id, const Uint8 *sha, Uint8 (*manifest)[32]) {
+    if (memcmp(sha, manifest[id], 32) == 0) {
+        return 1;
+    }
+    return es_file[id] && memcmp(sha, es_sha[id], 32) == 0 ? 2 : 0;
 }
 
 /* Stops the program: `path`, the reason, and how to get a pack. */
@@ -180,6 +201,7 @@ static int open_pak(const char *path, int hash_data) {
     Uint64 size;
     Uint64 total = 0;
     Uint64 t0 = SDL_GetTicksNS();
+    int es = 0;
     int i;
 
     Pak_ParseManifest(exe_sha, manifest);
@@ -221,8 +243,12 @@ static int open_pak(const char *path, int hash_data) {
             f->size > size - f->offset) {
             return bad("index entry 0x%03X does not fit the game's file table", i);
         }
-        if (memcmp(f->sha, manifest[i], 32) != 0) {
+        switch (Pak_FileMatch(i, f->sha, manifest)) {
+        case 0:
             return bad("file 0x%03X does not match the manifest (modified or other disc)", i);
+        case 2:
+            es++;
+            break;
         }
         Sha256_Update(&all, f->sha, 32);
         by_lba[i] = (unsigned short)i;
@@ -231,6 +257,9 @@ static int open_pak(const char *path, int hash_data) {
     Sha256_Final(&all, digest);
     if (memcmp(digest, header + 0x30, 32) != 0) {
         return bad("content hash does not match the index");
+    }
+    if (es != 0 && es != Pak_EsFiles) {
+        return bad("%d of the %d Spanish files translated (mixed or other translation)", es, Pak_EsFiles);
     }
 
     /* Hash every file's data: a pack whose bytes were altered after it was written. */
@@ -265,8 +294,9 @@ static int open_pak(const char *path, int hash_data) {
 #if DW2_DEV
     SDL_strlcpy(pak_path, path, sizeof(pak_path));
 #endif
-    printf("[pak] %s: %d files, %.1f MB, all match the manifest (%s in %.2f s)\n", path, PAK_FILES, total / 1e6,
-           hash_data ? "checked" : "index checked, data read back by the build", (SDL_GetTicksNS() - t0) / 1e9);
+    printf("[pak] %s: %d files, %.1f MB, all match the manifest (%s in %.2f s)%s\n", path, PAK_FILES, total / 1e6,
+           hash_data ? "checked" : "index checked, data read back by the build", (SDL_GetTicksNS() - t0) / 1e9,
+           es != 0 ? ", Spanish translation by Alemito" : "");
     return 0;
 }
 

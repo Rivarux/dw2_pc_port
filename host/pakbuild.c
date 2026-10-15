@@ -682,6 +682,7 @@ static int build(Disc *d, const Uint8 *exe, SDL_IOStream *out, const char *tmp) 
     Uint64 total = 0, done = 0;
     Uint32 maxsec = 0;
     int nbad = 0, firstbad[12];
+    int es = 0;
     int i;
 
     Pak_ParseManifest(exe_sha, manifest);
@@ -706,6 +707,7 @@ static int build(Disc *d, const Uint8 *exe, SDL_IOStream *out, const char *tmp) 
     for (i = 0; i < PAK_FILES; i++) {
         Entry *e = &ent[i];
         int form2 = 0;
+        int match;
         Uint32 k;
         size_t bytes, pad;
         Sha256 s;
@@ -736,7 +738,9 @@ static int build(Disc *d, const Uint8 *exe, SDL_IOStream *out, const char *tmp) 
         Sha256_Init(&s);
         Sha256_Update(&s, buf, (size_t)e->size);
         Sha256_Final(&s, e->sha);
-        if (memcmp(e->sha, manifest[i], 32) != 0) {
+        match = Pak_FileMatch(i, e->sha, manifest);
+        es += match == 2;
+        if (match == 0) {
             if (nbad < 12) {
                 firstbad[nbad] = i;
             }
@@ -763,6 +767,11 @@ static int build(Disc *d, const Uint8 *exe, SDL_IOStream *out, const char *tmp) 
         return fail("%d file(s) do not match the manifest: %s%s\n"
                     "This is not an unmodified Digimon World 2 USA (SLUS-01193) disc image (modified or damaged).",
                     nbad, list, nbad > 12 ? " ..." : "");
+    }
+    if (es != 0 && es != Pak_EsFiles) {
+        return fail("%d of the %d files of the Spanish translation (Alemito) are translated, want all of them.\n"
+                    "This image mixes English and Spanish files or has another version of the translation.",
+                    es, Pak_EsFiles);
     }
     Sha256_Init(&all);
     for (i = 0; i < PAK_FILES; i++) {

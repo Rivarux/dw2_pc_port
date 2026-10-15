@@ -132,15 +132,19 @@ def read_files(img):
 def read_manifest():
     if not os.path.exists(MANIFEST):
         raise DiscError("%s missing" % MANIFEST)
-    m = {}
-    for line in open(MANIFEST):
-        line = line.split("#", 1)[0].split()
-        if not line:
-            continue
-        key = "exe" if line[0] == "exe" else int(line[0], 16)
-        m[key] = line[1]
-    if len(m) != FILE_COUNT + 1:
-        raise DiscError("%s: %d entries, want %d" % (MANIFEST, len(m), FILE_COUNT + 1))
+    m = {"es": {}}
+    with open(MANIFEST) as f:
+        for line in f:
+            line = line.split("#", 1)[0].split()
+            if not line:
+                continue
+            if line[0] == "es":  # Alemito's Spanish translation: the files it changes
+                m["es"][int(line[1], 16)] = line[2]
+                continue
+            key = "exe" if line[0] == "exe" else int(line[0], 16)
+            m[key] = line[1]
+    if len(m) != FILE_COUNT + 2:
+        raise DiscError("%s: %d entries, want %d" % (MANIFEST, len(m) - 1, FILE_COUNT + 1))
     return m
 
 
@@ -231,10 +235,14 @@ def main():
         manifest = None if args.write_manifest else read_manifest()
         files = {}
         bad = []
+        es = 0
         for fid, lba, count, fmt, data in read_files(img):
             digest = hashlib.sha256(data).digest()
             files[fid] = (lba, count, fmt, data, digest)
             if manifest is not None and manifest[fid] != digest.hex():
+                if manifest["es"].get(fid) == digest.hex():
+                    es += 1
+                    continue
                 bad.append(fid)
                 if fid == "exe":
                     break  # the file table itself is not the retail one
@@ -243,6 +251,9 @@ def main():
             raise DiscError("%d file(s) do not match the manifest: %s%s\n"
                             "This is not an unmodified Digimon World 2 USA (SLUS-01193) disc image."
                             % (len(bad), names, " ..." if len(bad) > 12 else ""))
+        if es and es != len(manifest["es"]):
+            raise DiscError("%d of the %d files of the Spanish translation (Alemito) are translated, want all of them"
+                            % (es, len(manifest["es"])))
         if args.write_manifest:
             problems = check_known_content(files, args.dumps)
             if problems:
@@ -262,7 +273,8 @@ def main():
     except DiscError as e:
         sys.exit("dw2pack: %s" % e)
     raw = sum(1 for i in range(FILE_COUNT) if files[i][2] == FORMAT_RAW)
-    print("dw2pack: all %d files match the manifest (%d with Form 2 sectors kept raw)" % (FILE_COUNT, raw))
+    print("dw2pack: all %d files match the manifest (%d with Form 2 sectors kept raw)%s"
+          % (FILE_COUNT, raw, ", Spanish translation by Alemito" if es else ""))
     print("dw2pack: wrote %s (%.1f MB, content %s)" % (out, size / 1e6, content.hex()[:16]))
 
 

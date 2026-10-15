@@ -24,6 +24,12 @@ file does not match and writes no pack. dw2.exe checks the pack against the same
 mod layers. The manifest was written once from a dump checked against the retail SHA-1s of
 SLUS_011.93 and the 7 STAG*.PRO (`dw2pack.py --write-manifest`).
 
+The `es <id> <sha256>` lines at the end are Alemito's Spanish translation: the 92 data files it
+changes, as translated (same sizes, same exe and file table). A Spanish image passes when every
+one of them is the translated file and every other file matches its English line; a mix of
+English and Spanish files is refused. The pack format is the same for both. `--write-manifest`
+writes the English lines only.
+
 ## Layout
 
 All integers little endian. Offsets are absolute file offsets.
